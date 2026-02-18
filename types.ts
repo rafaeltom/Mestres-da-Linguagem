@@ -8,6 +8,13 @@ export interface LevelRule {
   color: string;
 }
 
+export interface TeacherProfileData {
+  name: string;
+  subject: string;
+  bio: string;
+  passwordHash: string; // Armazena apenas o Hash
+}
+
 export interface Student {
   id: string;
   name: string;

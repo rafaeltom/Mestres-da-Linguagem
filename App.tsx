@@ -1,9 +1,10 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { Bimester, Student, School, ClassGroup, Transaction, TaskDefinition, Badge, LevelRule } from './types';
+import { Bimester, Student, School, ClassGroup, Transaction, TaskDefinition, Badge, LevelRule, TeacherProfileData } from './types';
 import { getLevel, getNextLevel } from './utils/gamificationRules';
-import { loadData, saveData, AppData, addTransaction, getAllStudents, exportDataToJSON, importDataFromJSON } from './services/localStorageService';
+import { loadData, saveData, AppData, addTransaction, getAllStudents, exportDataToJSON, importDataFromJSON, removeTransaction, updateTransactionAmount, loadProfile, saveProfile } from './services/localStorageService';
+import { TURMAS_2026 } from './services/turmas2026';
 
 // --- CONSTANTES VISUAIS ---
 
@@ -27,6 +28,21 @@ const ICON_LIBRARY = [
   'fa-running', 'fa-swimmer', 'fa-futbol', 'fa-basketball-ball', 'fa-music',
   'fa-guitar', 'fa-camera', 'fa-video', 'fa-theater-masks', 'fa-paint-brush'
 ];
+
+// --- SEGURANÇA SIMPLIFICADA (BASE64) ---
+
+const MASTER_EMAIL = "rafaelalmeida293@gmail.com";
+// senha codificada
+const MASTER_PASS_ENCODED = "U3dmMTIzc3dm"; 
+
+// Função simples para codificar senha (não é criptografia, é ofuscação para não ficar texto puro no código)
+const obscurePassword = (pass: string): string => {
+    try {
+        return btoa(pass);
+    } catch (e) {
+        return "";
+    }
+};
 
 // --- COMPONENTES UI ---
 
@@ -113,17 +129,26 @@ const BatchStudentModal = ({ onClose, onSave }: any) => {
 };
 
 // --- LOGIN COMPONENT ---
-const LoginScreen = ({ onLogin }: { onLogin: (e: string, p: string) => boolean }) => {
+const LoginScreen = ({ onLogin }: { onLogin: (e: string, p: string) => Promise<boolean> }) => {
     const [email, setEmail] = useState('');
     const [pass, setPass] = useState('');
     const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if(onLogin(email, pass)) {
-            setError('');
-        } else {
-            setError('Credenciais inválidas.');
+        setLoading(true);
+        setError('');
+        
+        try {
+            const success = await onLogin(email, pass);
+            if (!success) {
+                setError('Credenciais inválidas.');
+            }
+        } catch (err) {
+            setError('Erro ao processar login.');
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -149,6 +174,7 @@ const LoginScreen = ({ onLogin }: { onLogin: (e: string, p: string) => boolean }
                             value={email}
                             onChange={e => setEmail(e.target.value)}
                             placeholder="usuario@email.com"
+                            disabled={loading}
                         />
                     </div>
                     <div>
@@ -159,13 +185,14 @@ const LoginScreen = ({ onLogin }: { onLogin: (e: string, p: string) => boolean }
                             value={pass}
                             onChange={e => setPass(e.target.value)}
                             placeholder="••••••••"
+                            disabled={loading}
                         />
                     </div>
                     
-                    {error && <p className="text-xs text-red-500 font-bold text-center bg-red-50 p-2 rounded-lg">{error}</p>}
+                    {error && <p className="text-xs text-red-500 font-bold text-center bg-red-50 p-2 rounded-lg animate-fade-in">{error}</p>}
 
-                    <button className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl shadow-lg shadow-indigo-200 transition-all flex items-center justify-center gap-2">
-                        <i className="fas fa-sign-in-alt"></i> Entrar no Sistema
+                    <button disabled={loading} className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-70 disabled:cursor-not-allowed text-white font-bold py-3 rounded-xl shadow-lg shadow-indigo-200 transition-all flex items-center justify-center gap-2">
+                        {loading ? <i className="fas fa-spinner animate-spin"></i> : <><i className="fas fa-sign-in-alt"></i> Entrar</>}
                     </button>
                 </form>
 
@@ -181,7 +208,8 @@ const LoginScreen = ({ onLogin }: { onLogin: (e: string, p: string) => boolean }
 
 export default function App() {
   const [data, setData] = useState<AppData>({ schools: [], transactions: [], taskCatalog: [], badgesCatalog: [] });
-  const [view, setView] = useState<'dashboard' | 'schools' | 'catalog' | 'settings' | 'student-view'>('dashboard');
+  const [profile, setProfile] = useState<TeacherProfileData>(loadProfile()); 
+  const [view, setView] = useState<'dashboard' | 'schools' | 'catalog' | 'settings' | 'student-view' | 'profile'>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
   // Auth State
@@ -193,7 +221,7 @@ export default function App() {
   const [viewingStudentId, setViewingStudentId] = useState<string>('');
   const [currentBimester, setCurrentBimester] = useState<Bimester>(1);
 
-  // Estados de Gerenciamento (Modais)
+  // Estados de Gerenciamento
   const [modalConfig, setModalConfig] = useState<{
     isOpen: boolean;
     type: 'school' | 'class' | 'task' | 'badge' | null;
@@ -202,7 +230,6 @@ export default function App() {
     initialData?: any;
   }>({ isOpen: false, type: null, mode: 'create' });
 
-  // Estado para Exclusão (Substitui window.confirm)
   const [deleteConfig, setDeleteConfig] = useState<{
       isOpen: boolean;
       type: 'school' | 'class' | 'task' | 'badge' | 'student' | null;
@@ -211,7 +238,7 @@ export default function App() {
       itemName?: string;
   }>({ isOpen: false, type: null, id: null });
 
-  // Campos de Formulário Temporários
+  // Campos de Formulário
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -222,10 +249,7 @@ export default function App() {
     bimesters: [1, 2, 3, 4] as Bimester[] 
   });
 
-  // Outros Modais
   const [showBatchImport, setShowBatchImport] = useState(false);
-  
-  // Avaliação
   const [selectedStudentsForTask, setSelectedStudentsForTask] = useState<string[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string>(''); 
   const [manualDesc, setManualDesc] = useState('');
@@ -236,13 +260,11 @@ export default function App() {
 
   // --- INICIALIZAÇÃO ---
   useEffect(() => {
-    // Check Auth
     const storedAuth = localStorage.getItem('mestres_auth_token');
     if(storedAuth === 'valid_session_secured') {
         setIsAuthenticated(true);
     }
 
-    // Load Data
     const loaded = loadData();
     setData(loaded);
     if (loaded.schools.length > 0) {
@@ -253,19 +275,36 @@ export default function App() {
     }
   }, []);
 
-  // Fechar menu mobile ao trocar de view
   useEffect(() => {
     setIsMobileMenuOpen(false);
   }, [view]);
 
   // --- AUTH HANDLERS ---
-  const performLogin = (email: string, pass: string): boolean => {
-      // Credenciais Hardcoded (Security Minimum Demand)
-      if(email === 'rafaelalmeida293@gmail.com' && pass === 'Swf#123swf') {
+  const performLogin = async (emailInput: string, passInput: string): Promise<boolean> => {
+      // Normaliza o email
+      const cleanEmail = emailInput.trim().toLowerCase();
+      
+      // Gera "hash" simples da senha inserida para comparação
+      const inputEncoded = obscurePassword(passInput);
+
+      // 1. CHECAGEM MESTRA (Prioridade Máxima)
+      // Verifica se é o dono da conta com a senha mestre
+      if (cleanEmail === MASTER_EMAIL && inputEncoded === MASTER_PASS_ENCODED) {
           setIsAuthenticated(true);
           localStorage.setItem('mestres_auth_token', 'valid_session_secured');
           return true;
       }
+      
+      // 2. Validação contra Perfil Personalizado (se a senha for diferente da padrão)
+      // Caso o professor tenha alterado a senha no perfil
+      if (profile.passwordHash && profile.passwordHash !== MASTER_PASS_ENCODED) {
+          if (cleanEmail === MASTER_EMAIL && inputEncoded === profile.passwordHash) {
+              setIsAuthenticated(true);
+              localStorage.setItem('mestres_auth_token', 'valid_session_secured');
+              return true;
+          }
+      }
+
       return false;
   };
 
@@ -291,10 +330,45 @@ export default function App() {
     saveData(newData);
   };
 
+  // --- HELPER: GERENCIAR TRANSAÇÕES (EDITAR/EXCLUIR) ---
+  const handleDeleteTransaction = (transactionId: string) => {
+      if(window.confirm("Tem certeza que deseja apagar este recebimento/medalha? O saldo do aluno será recalculado.")) {
+          const newData = removeTransaction(data, transactionId);
+          setData(newData);
+          saveData(newData);
+      }
+  };
+
+  const handleEditTransactionAmount = (transactionId: string, currentAmount: number) => {
+      const newValStr = prompt("Novo valor (LXC):", currentAmount.toString());
+      if(newValStr !== null) {
+          const newVal = Number(newValStr);
+          if(!isNaN(newVal)) {
+              const newData = updateTransactionAmount(data, transactionId, newVal);
+              setData(newData);
+              saveData(newData);
+          } else {
+              alert("Valor inválido.");
+          }
+      }
+  };
+
+  // --- HELPER: CARGA RÁPIDA 2026 ---
+  const load2026Backup = () => {
+      if(window.confirm("ATENÇÃO: Isso substituirá todos os dados atuais pelas Turmas de 2026. Deseja continuar?")) {
+          const rawData = TURMAS_2026;
+          // Salva diretamente
+          saveData(rawData);
+          alert("Backup carregado! Recarregando sistema...");
+          setTimeout(() => {
+              window.location.reload();
+          }, 200);
+      }
+  };
+
   // --- CRUD HANDLERS ---
 
   const openModal = (type: 'school' | 'class' | 'task' | 'badge', mode: 'create' | 'edit', dataItem?: any) => {
-    // Stop propagation handled in button click
     setFormData({
       name: dataItem?.name || dataItem?.title || '',
       description: dataItem?.description || '',
@@ -302,7 +376,7 @@ export default function App() {
       icon: dataItem?.icon || 'fa-medal',
       imageUrl: dataItem?.imageUrl || '',
       rewardValue: dataItem?.rewardValue || 0,
-      bimesters: dataItem?.bimesters || [1, 2, 3, 4] // Load existing bimesters or default to all
+      bimesters: dataItem?.bimesters || [1, 2, 3, 4] 
     });
     setModalConfig({ isOpen: true, type, mode, editingId: dataItem?.id, initialData: dataItem });
   };
@@ -319,10 +393,8 @@ export default function App() {
     if (!name.trim()) return alert("O nome é obrigatório.");
     if ((type === 'task' || type === 'badge') && bimesters.length === 0) return alert("Selecione pelo menos um bimestre.");
 
-    // DEEP COPY para garantir atualização de estado
     const newData = JSON.parse(JSON.stringify(data));
 
-    // --- ESCOLAS ---
     if (type === 'school') {
       if (mode === 'create') {
         const newSchool: School = { id: uuidv4(), name, classes: [] };
@@ -333,12 +405,9 @@ export default function App() {
         if (school) school.name = name;
       }
     }
-
-    // --- TURMAS ---
     else if (type === 'class') {
       const targetSchoolId = mode === 'create' ? selectedSchoolId : modalConfig.initialData.schoolId;
       const school = newData.schools.find((s: School) => s.id === targetSchoolId);
-      
       if (school) {
         if (mode === 'create') {
           const newClass: ClassGroup = { id: uuidv4(), name, schoolId: targetSchoolId, students: [] };
@@ -351,50 +420,20 @@ export default function App() {
         }
       }
     }
-
-    // --- TAREFAS (CATÁLOGO) ---
     else if (type === 'task') {
       if (mode === 'create') {
-        newData.taskCatalog.push({ 
-            id: uuidv4(), 
-            title: name, 
-            description, 
-            defaultPoints: Number(points),
-            bimesters: bimesters
-        });
+        newData.taskCatalog.push({ id: uuidv4(), title: name, description, defaultPoints: Number(points), bimesters: bimesters });
       } else {
         const task = newData.taskCatalog.find((t: TaskDefinition) => t.id === editingId);
-        if(task) { 
-            task.title = name; 
-            task.description = description; 
-            task.defaultPoints = Number(points); 
-            task.bimesters = bimesters;
-        }
+        if(task) { task.title = name; task.description = description; task.defaultPoints = Number(points); task.bimesters = bimesters; }
       }
     }
-
-    // --- MEDALHAS (CATÁLOGO) ---
     else if (type === 'badge') {
       if (mode === 'create') {
-        newData.badgesCatalog.push({ 
-            id: uuidv4(), 
-            name, 
-            icon, 
-            imageUrl,
-            description,
-            rewardValue: Number(rewardValue),
-            bimesters: bimesters
-        });
+        newData.badgesCatalog.push({ id: uuidv4(), name, icon, imageUrl, description, rewardValue: Number(rewardValue), bimesters: bimesters });
       } else {
         const badge = newData.badgesCatalog.find((b: Badge) => b.id === editingId);
-        if(badge) { 
-            badge.name = name; 
-            badge.icon = icon; 
-            badge.imageUrl = imageUrl;
-            badge.description = description; 
-            badge.rewardValue = Number(rewardValue);
-            badge.bimesters = bimesters;
-        }
+        if(badge) { badge.name = name; badge.icon = icon; badge.imageUrl = imageUrl; badge.description = description; badge.rewardValue = Number(rewardValue); badge.bimesters = bimesters; }
       }
     }
 
@@ -403,18 +442,15 @@ export default function App() {
     closeModal();
   };
 
-  // --- DELETE SYSTEM (NUCLEAR OPTION) ---
+  // --- DELETE SYSTEM ---
   
   const requestDelete = (e: React.MouseEvent, type: 'school' | 'class' | 'task' | 'badge' | 'student', id: string, parentId?: string, itemName?: string) => {
-      e.stopPropagation(); // CRITICAL: Impede que o clique selecione o card pai
+      e.stopPropagation(); 
       setDeleteConfig({ isOpen: true, type, id, parentId, itemName });
   };
 
   const executeDelete = () => {
     const { type, id, parentId } = deleteConfig;
-    
-    // NUCLEAR OPTION: DEEP CLONE
-    // Isso garante que não existam referências compartilhadas que o React possa ignorar
     const newData = JSON.parse(JSON.stringify(data));
 
     if (type === 'school') {
@@ -423,18 +459,13 @@ export default function App() {
     }
     else if (type === 'class') {
       const school = newData.schools.find((s: School) => s.id === parentId);
-      if (school && school.classes) {
-          school.classes = school.classes.filter((c: ClassGroup) => c.id !== id);
-      }
+      if (school && school.classes) school.classes = school.classes.filter((c: ClassGroup) => c.id !== id);
       if (selectedClassId === id) setSelectedClassId('');
     }
     else if (type === 'student') {
-      // Procura em todas as escolas e turmas
       newData.schools.forEach((s: School) => {
           s.classes?.forEach((c: ClassGroup) => {
-              if(c.students) {
-                  c.students = c.students.filter((std: Student) => std.id !== id);
-              }
+              if(c.students) c.students = c.students.filter((std: Student) => std.id !== id);
           });
       });
     }
@@ -489,15 +520,12 @@ export default function App() {
           const badge = data.badgesCatalog.find(b => b.id === selectedTaskId);
           if(!badge) return;
 
-          // Se a medalha tem valor, adicionamos o valor na transação
-          const rewardAmount = badge.rewardValue || 0;
-
           selectedStudentsForTask.forEach(sid => {
               const tx: Transaction = {
                   id: uuidv4(),
                   studentId: sid,
                   type: 'BADGE',
-                  amount: rewardAmount, // Valor da medalha se houver
+                  amount: badge.rewardValue || 0, 
                   description: badge.id,
                   bimester: currentBimester,
                   date: new Date()
@@ -510,10 +538,7 @@ export default function App() {
 
           if(selectedTaskId) {
               const task = data.taskCatalog.find(t => t.id === selectedTaskId);
-              if(task) {
-                  points = task.defaultPoints;
-                  desc = task.title;
-              }
+              if(task) { points = task.defaultPoints; desc = task.title; }
           }
           if(!desc) desc = "Atividade de Sala";
 
@@ -553,12 +578,37 @@ export default function App() {
       reader.readAsText(file);
   };
 
+  // --- PROFILE LOGIC ---
+  const handleProfileUpdate = async (e: React.FormEvent) => {
+      e.preventDefault();
+      const form = e.target as HTMLFormElement;
+      const newName = (form.elements.namedItem('name') as HTMLInputElement).value;
+      const newSubject = (form.elements.namedItem('subject') as HTMLInputElement).value;
+      const newBio = (form.elements.namedItem('bio') as HTMLInputElement).value;
+      const newPass = (form.elements.namedItem('newPass') as HTMLInputElement).value;
+
+      let newHash = profile.passwordHash;
+      if (newPass.trim()) {
+          newHash = obscurePassword(newPass);
+      }
+
+      const updatedProfile = {
+          name: newName,
+          subject: newSubject,
+          bio: newBio,
+          passwordHash: newHash
+      };
+
+      setProfile(updatedProfile);
+      saveProfile(updatedProfile);
+      alert("Perfil atualizado com sucesso!");
+  };
+
   // --- DERIVED STATE ---
   const currentSchool = data.schools.find(s => s.id === selectedSchoolId);
   const currentClass = currentSchool?.classes?.find(c => c.id === selectedClassId);
   const studentsList = currentClass?.students || [];
 
-  // FILTERED CATALOGS BASED ON BIMESTER
   const filteredTasks = data.taskCatalog.filter(t => t.bimesters && t.bimesters.includes(currentBimester));
   const filteredBadges = data.badgesCatalog.filter(b => b.bimesters && b.bimesters.includes(currentBimester));
 
@@ -575,7 +625,6 @@ export default function App() {
       const level = getLevel(total, currentBimester);
       const myBadges = data.badgesCatalog.filter(b => student.badges?.includes(b.id));
 
-      // Algoritmo para calcular timeline de Níveis
       const studentTransactions = data.transactions
         .filter(t => t.studentId === student.id && t.bimester === currentBimester)
         .sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -630,7 +679,6 @@ export default function App() {
               </div>
               
               <div className="max-w-md mx-auto px-6 -mt-8 relative z-10 space-y-6">
-                  {/* BADGES EM DESTAQUE */}
                   <div className="bg-white p-6 rounded-3xl shadow-lg border-2 border-amber-100">
                       <div className="flex justify-between items-center mb-4">
                           <h3 className="text-slate-700 font-bold text-sm uppercase flex items-center gap-2"><i className="fas fa-medal text-amber-500 text-lg"></i> Hall de Medalhas</h3>
@@ -655,13 +703,11 @@ export default function App() {
                       )}
                   </div>
                   
-                  {/* EXTRATO COM TIMELINE DE NÍVEIS */}
                   <div className="space-y-4">
                       <h3 className="text-slate-500 font-bold text-xs uppercase ml-4 tracking-widest">Linha do Tempo</h3>
                       {timelineEvents.length === 0 && <div className="text-center text-slate-400 italic">Nenhuma atividade registrada neste bimestre.</div>}
                       {timelineEvents.map((tx: any) => (
                           <div key={tx.id}>
-                              {/* Evento de Level Up */}
                               {tx.levelUpData && (
                                   <div className="my-6 text-center animate-fade-in">
                                       <div className="inline-block bg-gradient-to-r from-indigo-500 to-purple-600 text-white px-6 py-2 rounded-full shadow-lg shadow-indigo-500/30 transform hover:scale-105 transition-transform">
@@ -676,12 +722,10 @@ export default function App() {
                                   </div>
                               )}
 
-                              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex justify-between items-center relative overflow-hidden">
-                                  {/* Indicador lateral */}
+                              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex justify-between items-center relative overflow-hidden group">
                                   <div className={`absolute left-0 top-0 bottom-0 w-1 ${tx.amount > 0 ? 'bg-emerald-400' : 'bg-red-400'}`}></div>
-                                  
-                                  <div className="pl-3">
-                                      <p className="font-bold text-slate-700 text-sm">
+                                  <div className="pl-3 flex-1 min-w-0">
+                                      <p className="font-bold text-slate-700 text-sm truncate">
                                           {tx.type === 'BADGE' ? (
                                             <span className="flex items-center gap-2 text-amber-600">
                                                 <i className="fas fa-medal"></i>
@@ -693,14 +737,31 @@ export default function App() {
                                           <i className="far fa-clock"></i> {new Date(tx.date).toLocaleDateString()}
                                       </p>
                                   </div>
-                                  <div className="text-right">
-                                      <div className={`font-black text-lg ${tx.amount > 0 ? 'text-emerald-500' : 'text-slate-400'}`}>
-                                          {tx.amount > 0 ? '+' : ''}{tx.amount}
+                                  <div className="flex items-center gap-4 pl-2">
+                                      <div className="text-right">
+                                          <div className={`font-black text-lg ${tx.amount > 0 ? 'text-emerald-500' : 'text-slate-400'}`}>
+                                              {tx.amount > 0 ? '+' : ''}{tx.amount}
+                                          </div>
+                                          <div className="text-[9px] font-bold text-slate-300 uppercase">LXC</div>
                                       </div>
-                                      <div className="text-[9px] font-bold text-slate-300 uppercase">LXC</div>
+                                      <div className="flex gap-1">
+                                          <button 
+                                            onClick={(e) => { e.stopPropagation(); handleEditTransactionAmount(tx.id, tx.amount); }}
+                                            className="w-8 h-8 rounded-lg bg-amber-50 text-amber-500 hover:bg-amber-100 flex items-center justify-center transition-colors"
+                                            title="Editar Valor"
+                                          >
+                                              <i className="fas fa-pen text-xs"></i>
+                                          </button>
+                                          <button 
+                                            onClick={(e) => { e.stopPropagation(); handleDeleteTransaction(tx.id); }}
+                                            className="w-8 h-8 rounded-lg bg-red-50 text-red-400 hover:bg-red-100 flex items-center justify-center transition-colors"
+                                            title="Excluir Item"
+                                          >
+                                              <i className="fas fa-trash text-xs"></i>
+                                          </button>
+                                      </div>
                                   </div>
                               </div>
-                              {/* Linha conectora simples se não for o último */}
                               <div className="h-4 w-0.5 bg-slate-200 mx-auto -mb-2 last:hidden"></div>
                           </div>
                       ))}
@@ -712,8 +773,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex bg-slate-50 overflow-hidden font-sans text-slate-800 flex-col md:flex-row">
-      
-      {/* MOBILE HEADER */}
       <div className="md:hidden h-16 bg-slate-900 flex items-center justify-between px-6 z-30 shadow-md flex-shrink-0">
           <div className="flex items-center gap-2">
              <i className="fas fa-gamepad text-indigo-400"></i>
@@ -724,7 +783,6 @@ export default function App() {
           </button>
       </div>
 
-      {/* MOBILE OVERLAY */}
       {isMobileMenuOpen && (
           <div 
              className="fixed inset-0 bg-black/60 z-40 md:hidden backdrop-blur-sm animate-fade-in"
@@ -732,7 +790,6 @@ export default function App() {
           ></div>
       )}
 
-      {/* SIDEBAR (Responsive Drawer) */}
       <aside 
          className={`
             fixed top-0 left-0 h-full w-64 bg-slate-900 text-white flex flex-col z-50 shadow-2xl 
@@ -755,7 +812,8 @@ export default function App() {
                 {id:'dashboard', icon:'fa-chalkboard-teacher', label:'Painel de Aulas'},
                 {id:'schools', icon:'fa-school', label:'Escolas & Turmas'},
                 {id:'catalog', icon:'fa-list-alt', label:'Missões & Medalhas'},
-                {id:'settings', icon:'fa-save', label:'Dados & Backup'}
+                {id:'settings', icon:'fa-save', label:'Dados & Backup'},
+                {id:'profile', icon:'fa-user-circle', label:'Perfil do Professor'}
             ].map(item => (
                 <button key={item.id} onClick={() => setView(item.id as any)} className={`w-full text-left px-4 py-3 rounded-xl flex items-center gap-3 transition-colors font-medium text-sm ${view === item.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
                     <i className={`fas ${item.icon} w-5 text-center`}></i> {item.label}
@@ -770,10 +828,74 @@ export default function App() {
          </div>
       </aside>
 
-      {/* MAIN */}
       <main className="flex-1 h-[calc(100vh-64px)] md:h-screen overflow-y-auto p-4 md:p-8 relative bg-slate-50">
          
-         {/* --- VIEW: SETTINGS (BACKUP) --- */}
+         {view === 'profile' && (
+             <div className="max-w-2xl mx-auto animate-fade-in">
+                 <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-6">Perfil do Professor</h2>
+                 <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-slate-200">
+                     <form onSubmit={handleProfileUpdate} className="space-y-6">
+                         <div className="flex items-center gap-6 mb-6">
+                             <div className="w-20 h-20 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 text-4xl shadow-inner">
+                                 <i className="fas fa-user-tie"></i>
+                             </div>
+                             <div>
+                                 <h3 className="text-xl font-bold text-slate-800">{profile.name}</h3>
+                                 <p className="text-slate-500 text-sm">{profile.subject}</p>
+                             </div>
+                         </div>
+
+                         <div>
+                             <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nome de Exibição</label>
+                             <input 
+                                 name="name"
+                                 defaultValue={profile.name}
+                                 className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
+                                 required 
+                             />
+                         </div>
+
+                         <div>
+                             <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Disciplina / Matéria</label>
+                             <input 
+                                 name="subject"
+                                 defaultValue={profile.subject}
+                                 className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
+                                 required
+                             />
+                         </div>
+
+                         <div>
+                             <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Bio / Comentário (Visível para alunos)</label>
+                             <textarea 
+                                 name="bio"
+                                 defaultValue={profile.bio}
+                                 className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 h-24"
+                             />
+                         </div>
+
+                         <div className="pt-6 border-t border-slate-100">
+                             <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><i className="fas fa-lock text-amber-500"></i> Alterar Senha</h4>
+                             <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nova Senha (Deixe em branco para manter a atual)</label>
+                             <input 
+                                 type="password"
+                                 name="newPass"
+                                 className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
+                                 placeholder="Nova senha..."
+                             />
+                             <p className="text-[10px] text-slate-400 mt-2">
+                                 Atenção: Ao alterar a senha, ela será salva neste navegador.
+                             </p>
+                         </div>
+
+                         <div className="flex justify-end pt-4">
+                             <Button className="w-full md:w-auto px-8">Salvar Alterações</Button>
+                         </div>
+                     </form>
+                 </div>
+             </div>
+         )}
+
          {view === 'settings' && (
              <div className="max-w-2xl mx-auto animate-fade-in">
                  <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-6">Segurança dos Dados</h2>
@@ -785,27 +907,31 @@ export default function App() {
                          <h3 className="text-xl font-bold text-slate-800">Backup Manual</h3>
                          <p className="text-slate-500 mt-2 max-w-md mx-auto text-sm md:text-base">Para garantir que você nunca perca o progresso dos seus alunos, faça o download do backup regularmente.</p>
                      </div>
-                     <div className="flex flex-col sm:flex-row gap-4 justify-center pt-4">
-                         <Button onClick={exportDataToJSON} className="py-4 px-8 text-base w-full sm:w-auto">
+                     <div className="flex flex-col gap-4 justify-center pt-4">
+                         <Button onClick={exportDataToJSON} className="py-4 px-8 text-base w-full">
                             <i className="fas fa-download"></i> Baixar Backup
                          </Button>
-                         <div className="relative w-full sm:w-auto">
+                         <div className="relative w-full">
                              <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".json" className="hidden" />
                              <Button variant="secondary" onClick={() => fileInputRef.current?.click()} className="py-4 px-8 text-base w-full">
-                                <i className="fas fa-upload"></i> Restaurar Dados
+                                <i className="fas fa-upload"></i> Restaurar de Arquivo
                              </Button>
+                         </div>
+                         <div className="w-full pt-4 border-t border-slate-100 mt-2">
+                             <Button variant="warning" onClick={load2026Backup} className="py-4 px-8 text-base w-full bg-amber-500 hover:bg-amber-600 text-white">
+                                <i className="fas fa-bolt"></i> Carga Rápida: Turmas 2026
+                             </Button>
+                             <p className="text-[10px] text-slate-400 mt-2">Usa o backup interno pré-configurado.</p>
                          </div>
                      </div>
                  </div>
              </div>
          )}
 
-         {/* --- VIEW: CATALOG --- */}
          {view === 'catalog' && (
              <div className="max-w-5xl mx-auto animate-fade-in">
                  <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-6 md:mb-8">Catálogo Global</h2>
                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
-                     {/* Tarefas */}
                      <div className="bg-white p-4 md:p-6 rounded-3xl shadow-sm border border-slate-200">
                          <div className="flex justify-between items-center mb-6">
                              <h3 className="text-lg font-bold text-indigo-900"><i className="fas fa-tasks mr-2"></i> Missões Padrão</h3>
@@ -832,7 +958,6 @@ export default function App() {
                              ))}
                          </div>
                      </div>
-                     {/* Badges */}
                      <div className="bg-white p-4 md:p-6 rounded-3xl shadow-sm border border-slate-200">
                          <div className="flex justify-between items-center mb-6">
                              <h3 className="text-lg font-bold text-amber-600"><i className="fas fa-medal mr-2"></i> Medalhas</h3>
@@ -870,7 +995,6 @@ export default function App() {
              </div>
          )}
 
-         {/* --- VIEW: SCHOOLS --- */}
          {view === 'schools' && (
              <div className="max-w-4xl mx-auto animate-fade-in">
                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 md:mb-8 gap-4">
@@ -920,10 +1044,8 @@ export default function App() {
              </div>
          )}
 
-         {/* --- VIEW: DASHBOARD (MAIN) --- */}
          {view === 'dashboard' && (
              <div className="flex flex-col h-full animate-fade-in">
-                 {/* Header Seletor */}
                  <div className="flex flex-col md:flex-row items-center gap-4 mb-4 md:mb-6 bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
                      <div className="flex-1 w-full md:w-auto">
                          <label className="text-[10px] font-bold text-slate-400 uppercase">Escola</label>
@@ -954,7 +1076,6 @@ export default function App() {
                      </div>
                  ) : (
                      <div className="flex flex-col lg:flex-row gap-6 h-full overflow-y-auto lg:overflow-hidden">
-                         {/* Lista Alunos */}
                          <div className="flex-1 bg-white rounded-3xl border border-slate-200 overflow-hidden flex flex-col shadow-sm min-h-[400px]">
                              <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                                  <button onClick={() => {
@@ -1001,7 +1122,6 @@ export default function App() {
                              </div>
                          </div>
 
-                         {/* Painel de Ação */}
                          <div className="w-full lg:w-80 bg-white rounded-3xl border border-slate-200 p-6 flex flex-col shadow-xl shadow-slate-200/50 lg:h-full h-auto flex-shrink-0">
                              <div className="flex bg-slate-100 rounded-xl p-1 mb-6">
                                  <button onClick={() => setIsGivingBadge(false)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${!isGivingBadge ? 'bg-white shadow text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}>Dar Pontos</button>
@@ -1020,7 +1140,6 @@ export default function App() {
                                     value={selectedTaskId}
                                     onChange={e => {
                                         setSelectedTaskId(e.target.value);
-                                        // Auto-fill logic for Tasks
                                         if(!isGivingBadge) {
                                             const t = data.taskCatalog.find(tsk => tsk.id === e.target.value);
                                             if(t) { setManualDesc(t.title); setManualPoints(t.defaultPoints); }
@@ -1030,18 +1149,15 @@ export default function App() {
                                  >
                                      <option value="">{isGivingBadge ? '-- Selecione a Medalha --' : '-- Personalizado --'}</option>
                                      
-                                     {/* FILTRAGEM DE TAREFAS PELO BIMESTRE ATUAL */}
                                      {!isGivingBadge && filteredTasks.map(t => (
                                          <option key={t.id} value={t.id}>{t.title} ({t.defaultPoints} pts)</option>
                                      ))}
 
-                                     {/* FILTRAGEM DE MEDALHAS PELO BIMESTRE ATUAL */}
                                      {isGivingBadge && filteredBadges.map(b => (
                                          <option key={b.id} value={b.id}>{b.name}</option>
                                      ))}
                                  </select>
                                  
-                                 {/* Mensagem se não houver opções para o bimestre atual */}
                                  {((!isGivingBadge && filteredTasks.length === 0) || (isGivingBadge && filteredBadges.length === 0)) && (
                                      <p className="text-[10px] text-orange-500 mt-2 font-bold italic">
                                          <i className="fas fa-exclamation-circle"></i> Nada disponível para o {currentBimester}º Bimestre.
@@ -1076,9 +1192,6 @@ export default function App() {
          )}
       </main>
 
-      {/* --- RENDERIZAÇÃO DOS MODAIS --- */}
-      
-      {/* 1. Modal Genérico (Escola, Turma, Tarefa, Medalha) */}
       {modalConfig.isOpen && (
         <GenericModal 
           title={
@@ -1132,7 +1245,6 @@ export default function App() {
 
                 <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Visual da Medalha</label>
                 
-                {/* Visual Preview */}
                 <div className="flex justify-center mb-4">
                   {formData.imageUrl ? (
                      <img src={formData.imageUrl} className="w-16 h-16 rounded-full object-cover border-4 border-indigo-100 shadow-lg" alt="Preview" />
@@ -1167,7 +1279,6 @@ export default function App() {
              </div>
            )}
 
-           {/* SELETOR DE BIMESTRES (Apenas para Task e Badge) */}
            {(modalConfig.type === 'task' || modalConfig.type === 'badge') && (
                <div className="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
                    <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Disponibilidade (Sazonalidade)</label>
@@ -1197,7 +1308,6 @@ export default function App() {
         </GenericModal>
       )}
 
-      {/* 2. Modal de Confirmação de Exclusão (SUBSTITUI WINDOW.CONFIRM) */}
       <ConfirmationModal 
           isOpen={deleteConfig.isOpen}
           title="Confirmar Exclusão"
@@ -1206,7 +1316,6 @@ export default function App() {
           onConfirm={executeDelete}
       />
 
-      {/* 3. Modal de Importação em Lote */}
       {showBatchImport && <BatchStudentModal onClose={() => setShowBatchImport(false)} onSave={batchImportStudents} />}
     </div>
   );
