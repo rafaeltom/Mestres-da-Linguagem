@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { db } from '../services/firebase';
-import { collection, addDoc, getDocs, query, limit } from 'firebase/firestore';
+import { collection, getCountFromServer } from 'firebase/firestore';
 
 const TeacherProfile: React.FC = () => {
   const [firebaseStatus, setFirebaseStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
@@ -9,28 +9,24 @@ const TeacherProfile: React.FC = () => {
 
   const handleTestConnection = async () => {
     setFirebaseStatus('testing');
-    setLogMessage('Iniciando handshake com Firestore...');
+    setLogMessage('Verificando coleções...');
     
     try {
-      // 1. Tentar escrever um documento de teste
-      setLogMessage('Tentando escrever no banco de dados...');
-      const docRef = await addDoc(collection(db, "system_diagnostics"), {
-        timestamp: new Date(),
-        action: "connection_test",
-        userAgent: navigator.userAgent
-      });
+      const colls = ['schools', 'classes', 'students', 'transactions'];
+      let msg = "Status do Banco de Dados:\n";
       
-      // 2. Tentar ler para confirmar
-      setLogMessage('Escrita ok. Tentando ler confirmação...');
-      const q = query(collection(db, "system_diagnostics"), limit(1));
-      await getDocs(q);
+      for (const c of colls) {
+        const collRef = collection(db, c);
+        const snapshot = await getCountFromServer(collRef);
+        msg += `- ${c}: ${snapshot.data().count} documentos\n`;
+      }
 
       setFirebaseStatus('success');
-      setLogMessage(`Sucesso! ID do documento gerado: ${docRef.id}`);
+      setLogMessage(msg);
     } catch (error: any) {
       console.error("Erro Firebase:", error);
       setFirebaseStatus('error');
-      setLogMessage(`Erro: ${error.message || "Falha na conexão"}. Verifique se o Firestore foi criado no console.`);
+      setLogMessage(`Erro: ${error.message}. Verifique a conexão.`);
     }
   };
 
@@ -47,74 +43,11 @@ const TeacherProfile: React.FC = () => {
           <div className="text-center md:text-left">
             <h2 className="text-3xl font-bold text-white mb-2">Professor Mestre</h2>
             <p className="text-indigo-300 font-medium mb-4">Especialista em Gamificação Educacional</p>
-            <div className="flex items-center gap-4 justify-center md:justify-start">
-               <span className="px-3 py-1 bg-slate-950/50 rounded-lg text-xs font-mono border border-indigo-500/30 text-indigo-200">
-                 Level 12
-               </span>
-               <div className="w-32 h-2 bg-slate-800 rounded-full overflow-hidden">
-                 <div className="w-[70%] h-full bg-emerald-500"></div>
-               </div>
-               <span className="text-xs text-slate-400">700/1000 XP</span>
-            </div>
           </div>
         </div>
       </div>
 
-      {/* Badges */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-slate-900/50 border border-slate-800 p-6 rounded-2xl flex items-center gap-4">
-            <div className="w-12 h-12 rounded-lg bg-amber-500/10 flex items-center justify-center">
-                <i className="fas fa-gem text-amber-500 text-xl"></i>
-            </div>
-            <div>
-                <h4 className="font-bold text-slate-200">Pioneiro Crypto</h4>
-                <p className="text-xs text-slate-500">Criou a primeira carteira de turma</p>
-            </div>
-        </div>
-        <div className="bg-slate-900/50 border border-slate-800 p-6 rounded-2xl flex items-center gap-4">
-            <div className="w-12 h-12 rounded-lg bg-emerald-500/10 flex items-center justify-center">
-                <i className="fas fa-users text-emerald-500 text-xl"></i>
-            </div>
-            <div>
-                <h4 className="font-bold text-slate-200">Engajador</h4>
-                <p className="text-xs text-slate-500">Mais de 50 alunos ativos</p>
-            </div>
-        </div>
-        <div className="bg-slate-900/50 border border-slate-800 p-6 rounded-2xl flex items-center gap-4 opacity-50">
-            <div className="w-12 h-12 rounded-lg bg-slate-800 flex items-center justify-center">
-                <i className="fas fa-lock text-slate-600 text-xl"></i>
-            </div>
-            <div>
-                <h4 className="font-bold text-slate-500">Mestre DeFi</h4>
-                <p className="text-xs text-slate-600">Bloqueado: Faça 100 transferências</p>
-            </div>
-        </div>
-      </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Configurações Avançadas */}
-        <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-6">
-            <h3 className="text-xl font-bold mb-4">Configurações Avançadas</h3>
-            <p className="text-sm text-slate-400 mb-6">Gerencie suas chaves de API e preferências de rede.</p>
-            
-            <div className="space-y-4">
-                <div className="flex items-center justify-between p-4 bg-slate-950 rounded-xl border border-slate-800">
-                    <div>
-                        <p className="font-bold text-sm">Chave Privada de Administrador (Custódia)</p>
-                        <p className="text-xs text-slate-500">Usada para assinar transações em nome dos alunos</p>
-                    </div>
-                    <button className="text-indigo-400 text-xs hover:underline">Revelar</button>
-                </div>
-                 <div className="flex items-center justify-between p-4 bg-slate-950 rounded-xl border border-slate-800">
-                    <div>
-                        <p className="font-bold text-sm">Exportar Dados Completos</p>
-                        <p className="text-xs text-slate-500">Baixar backup de todas as turmas e alunos (JSON)</p>
-                    </div>
-                    <button className="text-emerald-400 text-xs hover:underline">Download JSON</button>
-                </div>
-            </div>
-        </div>
-
         {/* Diagnóstico Firebase */}
         <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-6">
             <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
@@ -122,10 +55,10 @@ const TeacherProfile: React.FC = () => {
             </h3>
             <p className="text-sm text-slate-400 mb-6">Teste a conexão com Google Firestore (Nuvem).</p>
             
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 mb-4 h-24 overflow-y-auto font-mono text-[10px]">
+            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 mb-4 h-32 overflow-y-auto font-mono text-[10px] whitespace-pre-line">
                 {logMessage ? (
                     <span className={firebaseStatus === 'error' ? 'text-red-400' : 'text-emerald-400'}>
-                        {">"} {logMessage}
+                        {logMessage}
                     </span>
                 ) : (
                     <span className="text-slate-600">Aguardando início do teste...</span>
@@ -145,10 +78,8 @@ const TeacherProfile: React.FC = () => {
             >
                 {firebaseStatus === 'testing' ? (
                     <><i className="fas fa-spinner animate-spin"></i> Conectando...</>
-                ) : firebaseStatus === 'success' ? (
-                    <><i className="fas fa-check-circle"></i> Conexão Verificada</>
                 ) : (
-                    <><i className="fas fa-plug"></i> Testar Conexão Firebase</>
+                    <><i className="fas fa-plug"></i> Verificar Conexão</>
                 )}
             </button>
         </div>

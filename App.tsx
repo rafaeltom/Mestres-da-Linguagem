@@ -1,586 +1,992 @@
 
-import React, { useState, useEffect } from 'react';
-import { db } from './services/firebase';
-import { collection, getDocs, addDoc, query, where, doc, updateDoc, onSnapshot, orderBy } from 'firebase/firestore';
-import { Bimester, Student, School, ClassGroup, Transaction, Badge } from './types';
+import React, { useState, useEffect, useRef } from 'react';
+import { v4 as uuidv4 } from 'uuid';
+import { Bimester, Student, School, ClassGroup, Transaction, TaskDefinition, Badge } from './types';
 import { getLevel, getNextLevel } from './utils/gamificationRules';
-import { getGeminiRewardSuggestion } from './services/geminiService';
+import { loadData, saveData, AppData, addTransaction, getAllStudents, exportDataToJSON, importDataFromJSON } from './services/localStorageService';
 
-// --- COMPONENTES INTERNOS SIMPLIFICADOS PARA O ARQUIVO ÚNICO ---
+// --- CONSTANTES VISUAIS ---
 
-const BADGES_CATALOG: Badge[] = [
-  { id: 'reporter', name: 'Repórter', icon: 'fa-microphone', description: 'Excelente em reportar fatos', lxcBonus: 20 },
-  { id: 'biografia', name: 'Biógrafo', icon: 'fa-book-open', description: 'Escreveu uma biografia incrível', lxcBonus: 30 },
-  { id: 'participacao', name: 'Participativo', icon: 'fa-hand-paper', description: 'Participa ativamente das aulas', lxcBonus: 10 },
-  { id: 'artista', name: 'Artista', icon: 'fa-palette', description: 'Trabalho visual de destaque', lxcBonus: 15 },
+const ICON_LIBRARY = [
+  // Acadêmico & Conhecimento
+  'fa-book', 'fa-book-reader', 'fa-graduation-cap', 'fa-brain', 'fa-atom', 
+  'fa-calculator', 'fa-microscope', 'fa-globe-americas', 'fa-pen-nib', 'fa-language',
+  'fa-laptop-code', 'fa-flask', 'fa-dna', 'fa-history', 'fa-palette',
+  
+  // Comportamento & Liderança
+  'fa-hands-helping', 'fa-users', 'fa-user-clock', 'fa-check-circle', 'fa-heart',
+  'fa-star', 'fa-medal', 'fa-trophy', 'fa-crown', 'fa-thumbs-up',
+  'fa-award', 'fa-certificate', 'fa-hand-peace', 'fa-smile', 'fa-lightbulb',
+
+  // Gamificação & Diversão
+  'fa-gamepad', 'fa-puzzle-piece', 'fa-chess', 'fa-dice', 'fa-rocket',
+  'fa-ghost', 'fa-dragon', 'fa-robot', 'fa-hat-wizard', 'fa-space-shuttle',
+  'fa-shield-alt', 'fa-sword', 'fa-scroll', 'fa-map-marked-alt', 'fa-gem',
+
+  // Esportes & Artes
+  'fa-running', 'fa-swimmer', 'fa-futbol', 'fa-basketball-ball', 'fa-music',
+  'fa-guitar', 'fa-camera', 'fa-video', 'fa-theater-masks', 'fa-paint-brush'
 ];
 
-const INITIAL_SCHOOLS: School[] = [
-  { id: 'nsa', name: 'EE Nossa Senhora Aparecida' },
-  { id: 'pac', name: 'EMEF Prof. Alípio Corrêa Neto' }
-];
+// --- COMPONENTES UI ---
 
-// --- TELA DE LOGIN / SELEÇÃO DE PAPEL ---
-const RoleSelection = ({ onSelect }: { onSelect: (role: 'teacher' | 'student') => void }) => (
-  <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-slate-900 flex items-center justify-center p-4">
-    <div className="bg-white rounded-3xl p-8 shadow-2xl max-w-md w-full text-center space-y-8 border-4 border-indigo-500/30">
-      <div>
-        <h1 className="text-4xl font-bold text-indigo-900 mb-2 gamified-font">Mestres da Linguagem</h1>
-        <p className="text-slate-500">Gamificação Educacional</p>
-      </div>
-      
-      <div className="space-y-4">
-        <button onClick={() => onSelect('teacher')} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white p-6 rounded-2xl flex items-center gap-4 transition-all transform hover:scale-105 shadow-lg group">
-          <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center text-2xl group-hover:bg-white/30">
-            👨‍🏫
-          </div>
-          <div className="text-left">
-            <h3 className="font-bold text-lg">Sou Professor</h3>
-            <p className="text-indigo-200 text-sm">Gerenciar turmas e atividades</p>
-          </div>
-        </button>
+const Button = ({ onClick, children, variant = 'primary', className = '', disabled = false, title = '' }: any) => {
+  const base = "px-4 py-3 md:py-2 rounded-xl font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed text-sm flex-shrink-0 touch-manipulation";
+  const variants: any = {
+    primary: "bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg shadow-indigo-200",
+    secondary: "bg-white border-2 border-slate-200 text-slate-600 hover:border-indigo-300 hover:text-indigo-600",
+    danger: "bg-red-50 text-red-600 hover:bg-red-100 border border-red-200",
+    success: "bg-emerald-600 text-white hover:bg-emerald-700 shadow-lg shadow-emerald-200",
+    warning: "bg-amber-500 text-white hover:bg-amber-600 shadow-lg shadow-amber-200",
+    icon: "w-10 h-10 md:w-8 md:h-8 flex items-center justify-center rounded-lg bg-white border border-slate-200 text-slate-400 hover:text-indigo-600 hover:border-indigo-300 transition-all shadow-sm"
+  };
+  return <button onClick={onClick} disabled={disabled} className={`${base} ${variants[variant]} ${className}`} title={title}>{children}</button>;
+};
 
-        <button onClick={() => onSelect('student')} className="w-full bg-emerald-500 hover:bg-emerald-600 text-white p-6 rounded-2xl flex items-center gap-4 transition-all transform hover:scale-105 shadow-lg group">
-          <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center text-2xl group-hover:bg-white/30">
-            🎒
-          </div>
-          <div className="text-left">
-            <h3 className="font-bold text-lg">Sou Aluno</h3>
-            <p className="text-emerald-100 text-sm">Ver minhas medalhas e nível</p>
-          </div>
-        </button>
+const Input = ({ label, ...props }: any) => (
+  <div className="mb-4">
+    {label && <label className="block text-xs font-bold text-slate-500 uppercase mb-1">{label}</label>}
+    <input {...props} className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors" />
+  </div>
+);
+
+// --- MODAIS GERAIS ---
+
+const GenericModal = ({ title, onClose, onSave, children, saveLabel = "Salvar", saveVariant = "primary" }: any) => (
+  <div className="fixed inset-0 bg-slate-900/60 flex items-end md:items-center justify-center z-50 backdrop-blur-sm p-0 md:p-4 animate-fade-in" onClick={(e) => e.stopPropagation()}>
+    <div className="bg-white rounded-t-2xl md:rounded-2xl p-6 w-full md:max-w-md shadow-2xl transform transition-all scale-100 max-h-[90vh] overflow-y-auto flex flex-col">
+      <div className="flex justify-between items-center mb-6 flex-shrink-0">
+        <h3 className="text-xl font-bold text-slate-800">{title}</h3>
+        <button onClick={onClose} className="w-8 h-8 flex items-center justify-center bg-slate-100 rounded-full text-slate-400 hover:text-red-500 transition-colors"><i className="fas fa-times text-lg"></i></button>
       </div>
-      <p className="text-xs text-slate-400 mt-4">Versão 2.0 - Desenvolvido para o Mestre Rafael</p>
+      <div className="mb-6 space-y-4 overflow-y-auto custom-scrollbar">
+        {children}
+      </div>
+      <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 flex-shrink-0">
+        <Button variant="secondary" onClick={onClose} className="flex-1 md:flex-none">Cancelar</Button>
+        <Button onClick={onSave} variant={saveVariant} className="flex-1 md:flex-none">{saveLabel}</Button>
+      </div>
     </div>
   </div>
 );
 
-// --- DASHBOARD DO PROFESSOR ---
-const TeacherDashboard = ({ 
-  schools, 
-  classes, 
-  students, 
-  onAddPoints, 
-  onAddBadge, 
-  onImportCsv 
-}: any) => {
-  const [selectedSchoolId, setSelectedSchoolId] = useState<string>(schools[0]?.id || '');
-  const [selectedClassId, setSelectedClassId] = useState<string>('');
-  const [currentBimester, setCurrentBimester] = useState<Bimester>(1);
-  const [viewMode, setViewMode] = useState<'list' | 'tasks'>('list');
-  
-  // Estados para Modal de Tarefa
-  const [isTaskModalOpen, setTaskModalOpen] = useState(false);
-  const [taskDescription, setTaskDescription] = useState('');
-  const [taskPoints, setTaskPoints] = useState(10);
-  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
-  const [aiSuggestion, setAiSuggestion] = useState<string>('');
-
-  // Estados para Importação CSV
-  const [isImportModalOpen, setImportModalOpen] = useState(false);
-  const [csvContent, setCsvContent] = useState('');
-
-  const filteredClasses = classes.filter((c: any) => c.schoolId === selectedSchoolId);
-  const filteredStudents = students.filter((s: any) => s.classId === selectedClassId);
-
-  const handleSelectStudent = (id: string) => {
-    setSelectedStudentIds(prev => 
-      prev.includes(id) ? prev.filter(pid => pid !== id) : [...prev, id]
+const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message }: any) => {
+    if (!isOpen) return null;
+    return (
+        <GenericModal 
+            title={title} 
+            onClose={onClose} 
+            onSave={onConfirm} 
+            saveLabel="Sim, Excluir" 
+            saveVariant="danger"
+        >
+            <div className="text-center py-4">
+                <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-500 text-2xl">
+                    <i className="fas fa-exclamation-triangle"></i>
+                </div>
+                <p className="text-slate-600 text-sm font-medium">{message}</p>
+            </div>
+        </GenericModal>
     );
-  };
-
-  const handleSelectAll = () => {
-    if (selectedStudentIds.length === filteredStudents.length) {
-      setSelectedStudentIds([]);
-    } else {
-      setSelectedStudentIds(filteredStudents.map((s: any) => s.id));
-    }
-  };
-
-  const executeTask = () => {
-    if (selectedStudentIds.length === 0) return alert("Selecione alunos");
-    onAddPoints(selectedStudentIds, taskPoints, taskDescription, currentBimester);
-    setTaskModalOpen(false);
-    setSelectedStudentIds([]);
-    setTaskDescription('');
-  };
-
-  const askAi = async () => {
-    try {
-      setAiSuggestion("Consultando o oráculo pedagógico...");
-      const result = await getGeminiRewardSuggestion(taskDescription);
-      setTaskPoints(result.amount);
-      setAiSuggestion(result.message);
-    } catch (e) {
-      setAiSuggestion("Erro ao consultar IA.");
-    }
-  };
-
-  const processCsv = () => {
-    if (!selectedClassId) return alert("Selecione uma turma antes de importar");
-    onImportCsv(csvContent, selectedClassId, selectedSchoolId);
-    setImportModalOpen(false);
-    setCsvContent('');
-  };
-
-  return (
-    <div className="flex flex-col h-screen bg-slate-50 overflow-hidden">
-      {/* Header Professor */}
-      <header className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center shadow-sm z-10">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-200">
-            <i className="fas fa-chalkboard-teacher"></i>
-          </div>
-          <div>
-            <h1 className="font-bold text-slate-800 leading-tight">Painel do Mestre</h1>
-            <p className="text-xs text-slate-500">Gestão de Gamificação</p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-4">
-          <div className="flex bg-slate-100 rounded-lg p-1">
-             {[1, 2, 3, 4].map(b => (
-               <button 
-                key={b}
-                onClick={() => setCurrentBimester(b as Bimester)}
-                className={`px-4 py-1.5 rounded-md text-sm font-bold transition-all ${currentBimester === b ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:text-indigo-600'}`}
-               >
-                 {b}º Bim
-               </button>
-             ))}
-          </div>
-          <button className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 hover:bg-red-50 hover:text-red-500 transition-colors">
-            <i className="fas fa-sign-out-alt"></i>
-          </button>
-        </div>
-      </header>
-
-      <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
-        <aside className="w-64 bg-white border-r border-slate-200 flex flex-col overflow-y-auto">
-          <div className="p-4">
-            <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Escola</label>
-            <select 
-              value={selectedSchoolId} 
-              onChange={e => { setSelectedSchoolId(e.target.value); setSelectedClassId(''); }}
-              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-semibold text-slate-700 outline-none focus:border-indigo-500"
-            >
-              {schools.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </div>
-
-          <div className="flex-1 px-2">
-            <label className="px-2 text-xs font-bold text-slate-400 uppercase mb-2 block">Turmas</label>
-            <div className="space-y-1">
-              {filteredClasses.length === 0 && <p className="text-xs text-slate-400 px-2 italic">Nenhuma turma cadastrada.</p>}
-              {filteredClasses.map((c: any) => (
-                <button
-                  key={c.id}
-                  onClick={() => setSelectedClassId(c.id)}
-                  className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-all flex justify-between items-center ${selectedClassId === c.id ? 'bg-indigo-50 text-indigo-700 border border-indigo-200' : 'text-slate-600 hover:bg-slate-50'}`}
-                >
-                  {c.name}
-                  <i className="fas fa-chevron-right text-xs opacity-50"></i>
-                </button>
-              ))}
-              <button 
-                onClick={() => {
-                  const name = prompt("Nome da nova turma:");
-                  if(name) {
-                    /* Logica para adicionar turma seria aqui, simplificado para o exemplo */
-                    alert("Para adicionar turmas, use o banco de dados ou importe via CSV");
-                  }
-                }}
-                className="w-full text-left px-4 py-2 rounded-lg text-xs text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 border border-dashed border-slate-200 mt-2 flex items-center gap-2 justify-center"
-              >
-                <i className="fas fa-plus"></i> Nova Turma
-              </button>
-            </div>
-          </div>
-          
-          <div className="p-4 border-t border-slate-200">
-             <button 
-              onClick={() => setImportModalOpen(true)}
-              className="w-full py-2 bg-emerald-50 text-emerald-600 rounded-lg text-xs font-bold border border-emerald-200 hover:bg-emerald-100 flex items-center justify-center gap-2"
-             >
-               <i className="fas fa-file-csv"></i> Importar Alunos (CSV)
-             </button>
-          </div>
-        </aside>
-
-        {/* Main Content */}
-        <main className="flex-1 overflow-y-auto p-6 relative">
-          {!selectedClassId ? (
-            <div className="h-full flex flex-col items-center justify-center text-slate-400">
-              <i className="fas fa-users text-6xl mb-4 opacity-20"></i>
-              <p>Selecione uma turma para começar a avaliar.</p>
-            </div>
-          ) : (
-            <>
-              <div className="flex justify-between items-end mb-6">
-                <div>
-                   <h2 className="text-2xl font-bold text-slate-800">{classes.find((c: any) => c.id === selectedClassId)?.name}</h2>
-                   <p className="text-sm text-slate-500">{filteredStudents.length} Alunos • {schools.find((s:any) => s.id === selectedSchoolId)?.name}</p>
-                </div>
-                <div className="flex gap-2">
-                   <button 
-                    onClick={() => { setTaskPoints(10); setTaskModalOpen(true); }}
-                    disabled={selectedStudentIds.length === 0}
-                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-bold shadow-lg shadow-indigo-200 hover:bg-indigo-700 disabled:opacity-50 disabled:shadow-none transition-all flex items-center gap-2"
-                   >
-                     <i className="fas fa-star"></i> Avaliar Selecionados ({selectedStudentIds.length})
-                   </button>
-                </div>
-              </div>
-
-              {/* Lista de Alunos */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                 <div onClick={handleSelectAll} className="col-span-full mb-2 flex items-center gap-2 cursor-pointer text-sm text-slate-500 hover:text-indigo-600">
-                    <div className={`w-5 h-5 rounded border flex items-center justify-center ${selectedStudentIds.length === filteredStudents.length && filteredStudents.length > 0 ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 bg-white'}`}>
-                      <i className="fas fa-check text-xs"></i>
-                    </div>
-                    Selecionar Todos
-                 </div>
-
-                 {filteredStudents.map((student: any) => {
-                   const level = getLevel(student.lxcTotal[currentBimester] || 0, currentBimester);
-                   const isSelected = selectedStudentIds.includes(student.id);
-
-                   return (
-                     <div 
-                      key={student.id}
-                      onClick={() => handleSelectStudent(student.id)}
-                      className={`relative bg-white rounded-xl p-4 border-2 transition-all cursor-pointer group ${isSelected ? 'border-indigo-500 shadow-md transform -translate-y-1' : 'border-transparent shadow-sm hover:border-indigo-200'}`}
-                     >
-                       <div className="flex items-center gap-3 mb-3">
-                         <div className={`w-12 h-12 rounded-full ${level.color} flex items-center justify-center text-white text-lg font-bold shadow-inner`}>
-                           {student.name.charAt(0)}
-                         </div>
-                         <div className="overflow-hidden">
-                           <h3 className="font-bold text-slate-800 truncate">{student.name}</h3>
-                           <span className={`text-[10px] px-2 py-0.5 rounded-full text-white font-bold ${level.color}`}>
-                             {level.title}
-                           </span>
-                         </div>
-                       </div>
-                       
-                       <div className="flex justify-between items-end">
-                          <div className="text-2xl font-black text-slate-700 gamified-font">
-                            {student.lxcTotal[currentBimester] || 0} <span className="text-xs text-slate-400 font-normal">LXC</span>
-                          </div>
-                          <div className="flex gap-1">
-                             {student.badges?.slice(0,3).map((bId: string) => {
-                               const badge = BADGES_CATALOG.find(b => b.id === bId);
-                               return badge ? <i key={bId} className={`fas ${badge.icon} text-slate-300 text-xs`} title={badge.name}></i> : null;
-                             })}
-                          </div>
-                       </div>
-                     </div>
-                   );
-                 })}
-              </div>
-            </>
-          )}
-        </main>
-      </div>
-
-      {/* Modal de Tarefa */}
-      {isTaskModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
-            <div className="p-6 bg-indigo-600 text-white flex justify-between items-center">
-              <h3 className="text-xl font-bold"><i className="fas fa-star mr-2"></i> Atribuir Pontos</h3>
-              <button onClick={() => setTaskModalOpen(false)} className="text-white/70 hover:text-white"><i className="fas fa-times"></i></button>
-            </div>
-            <div className="p-6 space-y-4">
-              <div className="bg-indigo-50 p-3 rounded-lg text-xs text-indigo-800 border border-indigo-100">
-                <span className="font-bold">{selectedStudentIds.length} alunos selecionados.</span> Essa ação será registrada no histórico de cada um.
-              </div>
-
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-1">Motivo / Atividade</label>
-                <div className="flex gap-2">
-                  <input 
-                    type="text" 
-                    value={taskDescription}
-                    onChange={e => setTaskDescription(e.target.value)}
-                    className="flex-1 p-3 border border-slate-300 rounded-xl outline-none focus:border-indigo-500"
-                    placeholder="Ex: Entrega da redação..."
-                  />
-                  <button onClick={askAi} className="px-3 bg-purple-100 text-purple-600 rounded-xl hover:bg-purple-200 border border-purple-200" title="Sugerir valor com IA">
-                    <i className="fas fa-magic"></i>
-                  </button>
-                </div>
-                {aiSuggestion && <p className="text-xs text-purple-600 mt-1 italic"><i className="fas fa-robot mr-1"></i> {aiSuggestion}</p>}
-              </div>
-
-              <div>
-                <label className="block text-sm font-bold text-slate-700 mb-1">Valor (LXC)</label>
-                <div className="flex items-center gap-4">
-                  <button onClick={() => setTaskPoints(prev => prev - 5)} className="w-10 h-10 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold">-</button>
-                  <input 
-                    type="number" 
-                    value={taskPoints}
-                    onChange={e => setTaskPoints(Number(e.target.value))}
-                    className="w-24 text-center p-2 text-2xl font-bold text-indigo-600 border-b-2 border-indigo-100 outline-none"
-                  />
-                  <button onClick={() => setTaskPoints(prev => prev + 5)} className="w-10 h-10 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold">+</button>
-                </div>
-              </div>
-
-              <div className="pt-4 flex gap-3">
-                 <button onClick={() => setTaskModalOpen(false)} className="flex-1 py-3 text-slate-500 font-bold hover:bg-slate-50 rounded-xl">Cancelar</button>
-                 <button onClick={executeTask} className="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-xl shadow-lg hover:bg-indigo-700">Confirmar</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal de Importação CSV */}
-      {isImportModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6">
-            <h3 className="text-xl font-bold text-slate-800 mb-4">Importar Alunos via CSV</h3>
-            <p className="text-sm text-slate-500 mb-4">Cole o conteúdo do seu CSV abaixo. Formato esperado: Apenas nomes, um por linha.</p>
-            <textarea 
-              value={csvContent}
-              onChange={e => setCsvContent(e.target.value)}
-              className="w-full h-48 p-3 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono mb-4"
-              placeholder="João da Silva&#10;Maria Oliveira&#10;Pedro Santos"
-            />
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setImportModalOpen(false)} className="px-4 py-2 text-slate-500">Cancelar</button>
-              <button onClick={processCsv} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-bold">Importar</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
 };
 
-// --- VISÃO DO ALUNO ---
-const StudentView = ({ student, transactions, currentBimester }: any) => {
-  if (!student) return <div className="text-center p-10">Aluno não encontrado.</div>;
-
-  const currentLxc = student.lxcTotal[currentBimester] || 0;
-  const level = getLevel(currentLxc, currentBimester);
-  const nextLevelInfo = getNextLevel(currentLxc, currentBimester);
-
+const BatchStudentModal = ({ onClose, onSave }: any) => {
+  const [text, setText] = useState('');
   return (
-    <div className="min-h-screen bg-slate-100 pb-20">
-      {/* Header Gamificado */}
-      <div className={`${level.color} pb-16 pt-8 px-6 rounded-b-[3rem] shadow-xl relative overflow-hidden`}>
-         <div className="absolute top-0 left-0 w-full h-full opacity-10 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]"></div>
-         
-         <div className="relative z-10 flex flex-col items-center text-center">
-            <div className="w-24 h-24 bg-white rounded-full p-1 shadow-2xl mb-4">
-               <div className={`w-full h-full rounded-full ${level.color} flex items-center justify-center text-4xl text-white font-bold`}>
-                 {student.name.charAt(0)}
-               </div>
-            </div>
-            <h1 className="text-2xl font-bold text-white mb-1">{student.name}</h1>
-            <span className="bg-white/20 px-3 py-1 rounded-full text-white text-xs font-bold uppercase tracking-wider backdrop-blur-sm">
-              {level.title}
-            </span>
-            
-            <div className="mt-6 flex items-baseline gap-1">
-              <span className="text-5xl font-black text-white gamified-font">{currentLxc}</span>
-              <span className="text-white/80 font-medium">LXC</span>
-            </div>
-         </div>
-      </div>
-
-      {/* Barra de Progresso */}
-      <div className="px-6 -mt-8 relative z-20">
-        <div className="bg-white p-6 rounded-2xl shadow-lg border border-slate-100">
-           <div className="flex justify-between text-xs font-bold text-slate-400 mb-2">
-             <span>Progresso Bimestre {currentBimester}</span>
-             <span>Próximo: {nextLevelInfo ? nextLevelInfo.nextTitle : 'MÁXIMO!'}</span>
-           </div>
-           {nextLevelInfo ? (
-             <div className="w-full bg-slate-100 rounded-full h-4 overflow-hidden">
-               <div 
-                 className={`h-full ${level.color} transition-all duration-1000`} 
-                 style={{ width: `${Math.min(100, (currentLxc / (currentLxc + nextLevelInfo.pointsNeeded)) * 100)}%` }}
-               ></div>
-             </div>
-           ) : (
-             <div className="text-center text-amber-500 font-bold text-sm">🏆 Você alcançou o topo!</div>
-           )}
-           {nextLevelInfo && <p className="text-center text-xs text-slate-400 mt-2">Faltam {nextLevelInfo.pointsNeeded} LXC para evoluir!</p>}
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm p-4">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-lg animate-fade-in shadow-2xl">
+        <h3 className="text-xl font-bold mb-2">Importar Lista de Alunos</h3>
+        <p className="text-sm text-slate-500 mb-4">Cole a lista de nomes abaixo (um nome por linha).</p>
+        <textarea 
+            className="w-full h-48 bg-slate-50 border border-slate-300 rounded-xl p-3 text-sm mb-4 focus:border-indigo-500 outline-none font-mono"
+            placeholder="Ana Silva&#10;Bruno Souza&#10;Carlos Lima..."
+            value={text}
+            onChange={e => setText(e.target.value)}
+        />
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+          <Button onClick={() => onSave(text)} variant="success">Importar Agora</Button>
         </div>
-      </div>
-
-      {/* Histórico */}
-      <div className="px-6 mt-6 space-y-4">
-        <h3 className="font-bold text-slate-700 ml-1">Últimas Conquistas</h3>
-        {transactions.length === 0 ? (
-          <p className="text-center text-slate-400 text-sm py-4">Nenhuma atividade registrada ainda.</p>
-        ) : (
-          transactions.map((tx: any) => (
-            <div key={tx.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-100 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                 <div className={`w-10 h-10 rounded-full flex items-center justify-center ${tx.amount > 0 ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>
-                   <i className={`fas ${tx.amount > 0 ? 'fa-plus' : 'fa-minus'}`}></i>
-                 </div>
-                 <div>
-                   <p className="font-bold text-slate-700 text-sm">{tx.description}</p>
-                   <p className="text-[10px] text-slate-400">{new Date(tx.date.seconds * 1000).toLocaleDateString()}</p>
-                 </div>
-              </div>
-              <span className={`font-bold ${tx.amount > 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                {tx.amount > 0 ? '+' : ''}{tx.amount}
-              </span>
-            </div>
-          ))
-        )}
-      </div>
-      
-      {/* Botão Flutuante Loja (Mockup) */}
-      <div className="fixed bottom-6 right-6">
-        <button className="w-14 h-14 bg-indigo-600 rounded-full text-white shadow-xl flex items-center justify-center text-xl hover:scale-110 transition-transform">
-          <i className="fas fa-store"></i>
-        </button>
       </div>
     </div>
   );
 };
-
 
 // --- APP PRINCIPAL ---
-const App: React.FC = () => {
-  const [role, setRole] = useState<'teacher' | 'student' | null>(null);
-  const [schools, setSchools] = useState<School[]>([]);
-  const [classes, setClasses] = useState<ClassGroup[]>([]);
-  const [students, setStudents] = useState<Student[]>([]);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
+
+export default function App() {
+  const [data, setData] = useState<AppData>({ schools: [], transactions: [], taskCatalog: [], badgesCatalog: [] });
+  const [view, setView] = useState<'dashboard' | 'schools' | 'catalog' | 'settings' | 'student-view'>('dashboard');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
-  // Fake Student Login ID for Demo
-  const [demoStudentId, setDemoStudentId] = useState<string | null>(null);
+  // Contexto de Seleção
+  const [selectedSchoolId, setSelectedSchoolId] = useState<string>('');
+  const [selectedClassId, setSelectedClassId] = useState<string>('');
+  const [viewingStudentId, setViewingStudentId] = useState<string>('');
+  const [currentBimester, setCurrentBimester] = useState<Bimester>(1);
 
-  // Inicialização e Carga de Dados
+  // Estados de Gerenciamento (Modais)
+  const [modalConfig, setModalConfig] = useState<{
+    isOpen: boolean;
+    type: 'school' | 'class' | 'task' | 'badge' | null;
+    mode: 'create' | 'edit';
+    editingId?: string;
+    initialData?: any;
+  }>({ isOpen: false, type: null, mode: 'create' });
+
+  // Estado para Exclusão (Substitui window.confirm)
+  const [deleteConfig, setDeleteConfig] = useState<{
+      isOpen: boolean;
+      type: 'school' | 'class' | 'task' | 'badge' | 'student' | null;
+      id: string | null;
+      parentId?: string;
+      itemName?: string;
+  }>({ isOpen: false, type: null, id: null });
+
+  // Campos de Formulário Temporários
+  const [formData, setFormData] = useState({
+    name: '',
+    description: '',
+    points: 10,
+    icon: 'fa-medal',
+    imageUrl: '',
+    bimesters: [1, 2, 3, 4] as Bimester[] // Default all
+  });
+
+  // Outros Modais
+  const [showBatchImport, setShowBatchImport] = useState(false);
+  
+  // Avaliação
+  const [selectedStudentsForTask, setSelectedStudentsForTask] = useState<string[]>([]);
+  const [selectedTaskId, setSelectedTaskId] = useState<string>(''); 
+  const [manualDesc, setManualDesc] = useState('');
+  const [manualPoints, setManualPoints] = useState(10);
+  const [isGivingBadge, setIsGivingBadge] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // --- INICIALIZAÇÃO ---
   useEffect(() => {
-    // Carregar Escolas (se não existirem, cria as padrão)
-    const initData = async () => {
-      const schoolsSnap = await getDocs(collection(db, 'schools'));
-      if (schoolsSnap.empty) {
-        for (const s of INITIAL_SCHOOLS) {
-          await addDoc(collection(db, 'schools'), s);
-        }
+    const loaded = loadData();
+    setData(loaded);
+    if (loaded.schools.length > 0) {
+      if(!selectedSchoolId) setSelectedSchoolId(loaded.schools[0].id);
+      if (loaded.schools[0].classes?.length && !selectedClassId) {
+        setSelectedClassId(loaded.schools[0].classes[0].id);
       }
-      
-      // Listeners em Tempo Real
-      const unsubSchools = onSnapshot(collection(db, 'schools'), (snap) => 
-        setSchools(snap.docs.map(d => ({ id: d.id, ...d.data() } as School)))
-      );
-      
-      const unsubClasses = onSnapshot(collection(db, 'classes'), (snap) => 
-        setClasses(snap.docs.map(d => ({ id: d.id, ...d.data() } as ClassGroup)))
-      );
-
-      const unsubStudents = onSnapshot(collection(db, 'students'), (snap) => 
-        setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() } as Student)))
-      );
-
-      // Carregar Transações (Limitadas para performance)
-      const qTx = query(collection(db, 'transactions'), orderBy('date', 'desc')); // limit(50)
-      const unsubTx = onSnapshot(qTx, (snap) => 
-        setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() } as Transaction)))
-      );
-
-      return () => { unsubSchools(); unsubClasses(); unsubStudents(); unsubTx(); };
-    };
-    
-    initData();
+    }
   }, []);
 
-  // Actions
-  const handleAddPoints = async (studentIds: string[], amount: number, description: string, bimester: Bimester) => {
-    const batchPromises = studentIds.map(async (studentId) => {
-      // 1. Criar transação
-      await addDoc(collection(db, 'transactions'), {
-        studentId,
-        type: amount >= 0 ? 'TASK' : 'PENALTY',
-        amount,
-        description,
-        bimester,
-        date: new Date(),
-        teacherId: 'admin'
-      });
+  // Fechar menu mobile ao trocar de view
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [view]);
 
-      // 2. Atualizar saldo do aluno
-      const studentRef = doc(db, 'students', studentId);
-      const student = students.find(s => s.id === studentId);
-      if(student) {
-        const currentTotal = student.lxcTotal[bimester] || 0;
-        await updateDoc(studentRef, {
-          [`lxcTotal.${bimester}`]: currentTotal + amount
-        });
-      }
+  // --- CRUD HANDLERS ---
+
+  const openModal = (type: 'school' | 'class' | 'task' | 'badge', mode: 'create' | 'edit', dataItem?: any) => {
+    // Stop propagation handled in button click
+    setFormData({
+      name: dataItem?.name || dataItem?.title || '',
+      description: dataItem?.description || '',
+      points: dataItem?.defaultPoints || 10,
+      icon: dataItem?.icon || 'fa-medal',
+      imageUrl: dataItem?.imageUrl || '',
+      bimesters: dataItem?.bimesters || [1, 2, 3, 4] // Load existing bimesters or default to all
     });
+    setModalConfig({ isOpen: true, type, mode, editingId: dataItem?.id, initialData: dataItem });
+  };
+
+  const closeModal = () => {
+    setModalConfig({ ...modalConfig, isOpen: false });
+    setFormData({ name: '', description: '', points: 10, icon: 'fa-medal', imageUrl: '', bimesters: [1,2,3,4] });
+  };
+
+  const handleModalSave = () => {
+    const { type, mode, editingId } = modalConfig;
+    const { name, description, points, icon, bimesters, imageUrl } = formData;
     
-    await Promise.all(batchPromises);
-  };
+    if (!name.trim()) return alert("O nome é obrigatório.");
+    if ((type === 'task' || type === 'badge') && bimesters.length === 0) return alert("Selecione pelo menos um bimestre.");
 
-  const handleImportCsv = async (content: string, classId: string, schoolId: string) => {
-    const names = content.split('\n').map(n => n.trim()).filter(n => n.length > 0);
-    const promises = names.map(name => addDoc(collection(db, 'students'), {
-      name,
-      classId,
-      schoolId,
-      lxcTotal: { 1: 0, 2: 0, 3: 0, 4: 0 },
-      badges: [],
-      messages: []
-    }));
-    await Promise.all(promises);
-    alert(`${names.length} alunos importados com sucesso!`);
-  };
+    // DEEP COPY para garantir atualização de estado
+    const newData = JSON.parse(JSON.stringify(data));
 
-  if (!role) return <RoleSelection onSelect={setRole} />;
-
-  if (role === 'teacher') {
-    return (
-      <TeacherDashboard 
-        schools={schools} 
-        classes={classes} 
-        students={students}
-        onAddPoints={handleAddPoints}
-        onImportCsv={handleImportCsv}
-      />
-    );
-  }
-
-  if (role === 'student') {
-    // Tela de "Login" do aluno simplificada para o MVP
-    if (!demoStudentId) {
-      return (
-        <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-          <div className="bg-white p-6 rounded-2xl w-full max-w-sm">
-             <h2 className="text-xl font-bold mb-4">Quem é você?</h2>
-             <p className="text-xs text-slate-500 mb-4">Selecione seu nome na lista (Simulação)</p>
-             <div className="max-h-64 overflow-y-auto space-y-2">
-               {students.length === 0 && <p>Nenhum aluno cadastrado.</p>}
-               {students.map(s => (
-                 <button key={s.id} onClick={() => setDemoStudentId(s.id)} className="w-full text-left p-3 rounded-lg hover:bg-indigo-50 border border-slate-200 block">
-                   {s.name}
-                 </button>
-               ))}
-             </div>
-             <button onClick={() => setRole(null)} className="mt-4 text-xs text-slate-400">Voltar</button>
-          </div>
-        </div>
-      );
+    // --- ESCOLAS ---
+    if (type === 'school') {
+      if (mode === 'create') {
+        const newSchool: School = { id: uuidv4(), name, classes: [] };
+        newData.schools.push(newSchool);
+        setSelectedSchoolId(newSchool.id);
+      } else {
+        const school = newData.schools.find((s: School) => s.id === editingId);
+        if (school) school.name = name;
+      }
     }
+
+    // --- TURMAS ---
+    else if (type === 'class') {
+      const targetSchoolId = mode === 'create' ? selectedSchoolId : modalConfig.initialData.schoolId;
+      const school = newData.schools.find((s: School) => s.id === targetSchoolId);
+      
+      if (school) {
+        if (mode === 'create') {
+          const newClass: ClassGroup = { id: uuidv4(), name, schoolId: targetSchoolId, students: [] };
+          if(!school.classes) school.classes = [];
+          school.classes.push(newClass);
+          setSelectedClassId(newClass.id);
+        } else {
+          const cls = school.classes.find((c: ClassGroup) => c.id === editingId);
+          if (cls) cls.name = name;
+        }
+      }
+    }
+
+    // --- TAREFAS (CATÁLOGO) ---
+    else if (type === 'task') {
+      if (mode === 'create') {
+        newData.taskCatalog.push({ 
+            id: uuidv4(), 
+            title: name, 
+            description, 
+            defaultPoints: Number(points),
+            bimesters: bimesters
+        });
+      } else {
+        const task = newData.taskCatalog.find((t: TaskDefinition) => t.id === editingId);
+        if(task) { 
+            task.title = name; 
+            task.description = description; 
+            task.defaultPoints = Number(points); 
+            task.bimesters = bimesters;
+        }
+      }
+    }
+
+    // --- MEDALHAS (CATÁLOGO) ---
+    else if (type === 'badge') {
+      if (mode === 'create') {
+        newData.badgesCatalog.push({ 
+            id: uuidv4(), 
+            name, 
+            icon, 
+            imageUrl,
+            description,
+            bimesters: bimesters
+        });
+      } else {
+        const badge = newData.badgesCatalog.find((b: Badge) => b.id === editingId);
+        if(badge) { 
+            badge.name = name; 
+            badge.icon = icon; 
+            badge.imageUrl = imageUrl;
+            badge.description = description; 
+            badge.bimesters = bimesters;
+        }
+      }
+    }
+
+    setData(newData);
+    saveData(newData);
+    closeModal();
+  };
+
+  // --- DELETE SYSTEM (NUCLEAR OPTION) ---
+  
+  const requestDelete = (e: React.MouseEvent, type: 'school' | 'class' | 'task' | 'badge' | 'student', id: string, parentId?: string, itemName?: string) => {
+      e.stopPropagation(); // CRITICAL: Impede que o clique selecione o card pai
+      setDeleteConfig({ isOpen: true, type, id, parentId, itemName });
+  };
+
+  const executeDelete = () => {
+    const { type, id, parentId } = deleteConfig;
     
-    const student = students.find(s => s.id === demoStudentId);
-    const myTransactions = transactions.filter(t => t.studentId === demoStudentId);
+    // NUCLEAR OPTION: DEEP CLONE
+    // Isso garante que não existam referências compartilhadas que o React possa ignorar
+    const newData = JSON.parse(JSON.stringify(data));
+
+    if (type === 'school') {
+      newData.schools = newData.schools.filter((s: School) => s.id !== id);
+      if (selectedSchoolId === id) { setSelectedSchoolId(''); setSelectedClassId(''); }
+    }
+    else if (type === 'class') {
+      const school = newData.schools.find((s: School) => s.id === parentId);
+      if (school && school.classes) {
+          school.classes = school.classes.filter((c: ClassGroup) => c.id !== id);
+      }
+      if (selectedClassId === id) setSelectedClassId('');
+    }
+    else if (type === 'student') {
+      // Procura em todas as escolas e turmas
+      newData.schools.forEach((s: School) => {
+          s.classes?.forEach((c: ClassGroup) => {
+              if(c.students) {
+                  c.students = c.students.filter((std: Student) => std.id !== id);
+              }
+          });
+      });
+    }
+    else if (type === 'task') {
+      newData.taskCatalog = newData.taskCatalog.filter((t: TaskDefinition) => t.id !== id);
+    }
+    else if (type === 'badge') {
+      newData.badgesCatalog = newData.badgesCatalog.filter((b: Badge) => b.id !== id);
+    }
+
+    setData(newData);
+    saveData(newData);
+    setDeleteConfig({ isOpen: false, type: null, id: null });
+  };
+
+  // --- IMPORT SYSTEM ---
+
+  const batchImportStudents = (text: string) => {
+    if (!selectedSchoolId || !selectedClassId) return;
+    const names = text.split('\n').map(n => n.trim()).filter(n => n.length > 0);
     
-    return <StudentView student={student} transactions={myTransactions} currentBimester={1} />; // Default Bimester 1 for view
+    const newData = JSON.parse(JSON.stringify(data));
+    const school = newData.schools.find((s: School) => s.id === selectedSchoolId);
+    const cls = school?.classes.find((c: ClassGroup) => c.id === selectedClassId);
+    
+    if (cls) {
+        const newStudents = names.map((name: string) => ({
+            id: uuidv4(),
+            name,
+            schoolId: selectedSchoolId,
+            classId: selectedClassId,
+            avatarId: 'default',
+            lxcTotal: { 1: 0, 2: 0, 3: 0, 4: 0 },
+            badges: [],
+         }));
+         cls.students = [...(cls.students || []), ...newStudents];
+         setData(newData);
+         saveData(newData);
+    }
+    setShowBatchImport(false);
+ };
+
+  // --- REWARD SYSTEM ---
+
+  const giveRewards = () => {
+      if(selectedStudentsForTask.length === 0) return alert("Selecione alunos.");
+      
+      let currentData = data;
+
+      if(isGivingBadge) {
+          if(!selectedTaskId) return alert("Selecione uma medalha.");
+          const badge = data.badgesCatalog.find(b => b.id === selectedTaskId);
+          if(!badge) return;
+
+          selectedStudentsForTask.forEach(sid => {
+              const tx: Transaction = {
+                  id: uuidv4(),
+                  studentId: sid,
+                  type: 'BADGE',
+                  amount: 0,
+                  description: badge.id,
+                  bimester: currentBimester,
+                  date: new Date()
+              };
+              currentData = addTransaction(currentData, tx);
+          });
+      } else {
+          let points = manualPoints;
+          let desc = manualDesc;
+
+          if(selectedTaskId) {
+              const task = data.taskCatalog.find(t => t.id === selectedTaskId);
+              if(task) {
+                  points = task.defaultPoints;
+                  desc = task.title;
+              }
+          }
+          if(!desc) desc = "Atividade de Sala";
+
+          selectedStudentsForTask.forEach(sid => {
+              const tx: Transaction = {
+                  id: uuidv4(),
+                  studentId: sid,
+                  type: 'TASK',
+                  amount: points,
+                  description: desc,
+                  bimester: currentBimester,
+                  date: new Date()
+              };
+              currentData = addTransaction(currentData, tx);
+          });
+      }
+
+      setData(currentData);
+      saveData(currentData);
+      setSelectedStudentsForTask([]);
+      alert(isGivingBadge ? "Medalhas entregues!" : "Pontos atribuídos!");
+  };
+
+  // --- BACKUP ---
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if(!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+          if(importDataFromJSON(ev.target?.result as string)) {
+              alert("Dados restaurados com sucesso!");
+              setData(loadData());
+          } else {
+              alert("Arquivo inválido.");
+          }
+      };
+      reader.readAsText(file);
+  };
+
+  // --- DERIVED STATE ---
+  const currentSchool = data.schools.find(s => s.id === selectedSchoolId);
+  const currentClass = currentSchool?.classes?.find(c => c.id === selectedClassId);
+  const studentsList = currentClass?.students || [];
+
+  // FILTERED CATALOGS BASED ON BIMESTER
+  const filteredTasks = data.taskCatalog.filter(t => t.bimesters && t.bimesters.includes(currentBimester));
+  const filteredBadges = data.badgesCatalog.filter(b => b.bimesters && b.bimesters.includes(currentBimester));
+
+  // --- VIEW: STUDENT ---
+  if(view === 'student-view') {
+      const student = getAllStudents(data.schools).find(s => s.id === viewingStudentId);
+      if(!student) return <div className="p-8 text-center text-red-500">Erro: Aluno não encontrado. Volte ao painel.</div>;
+      const total = student.lxcTotal[currentBimester] || 0;
+      const level = getLevel(total, currentBimester);
+      const myBadges = data.badgesCatalog.filter(b => student.badges?.includes(b.id));
+
+      return (
+          <div className="min-h-screen bg-slate-100 font-sans pb-10">
+              <div className={`${level.color} text-white p-8 rounded-b-[3rem] shadow-xl relative`}>
+                  <button onClick={() => setView('dashboard')} className="absolute top-4 left-4 bg-white/20 px-3 py-1 rounded-full text-xs font-bold hover:bg-white/30 transition-all z-10"><i className="fas fa-arrow-left"></i> Voltar</button>
+                  <div className="flex flex-col items-center mt-4">
+                      <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center text-4xl text-slate-700 font-bold mb-2 shadow-lg">{student.name.charAt(0)}</div>
+                      <h1 className="text-2xl font-bold text-center">{student.name}</h1>
+                      <span className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold uppercase">{level.title}</span>
+                      <div className="mt-4 text-5xl font-black gamified-font">{total} <span className="text-sm opacity-70">LXC</span></div>
+                  </div>
+              </div>
+              
+              <div className="max-w-md mx-auto px-6 -mt-6 relative z-10">
+                  <div className="bg-white p-6 rounded-2xl shadow-lg mb-6">
+                      <h3 className="text-slate-500 font-bold text-xs uppercase mb-4 flex items-center gap-2"><i className="fas fa-medal text-amber-500"></i> Suas Medalhas</h3>
+                      {myBadges.length === 0 ? <p className="text-slate-400 text-sm italic">Ainda sem medalhas.</p> : (
+                          <div className="flex flex-wrap gap-4 justify-center sm:justify-start">
+                              {myBadges.map(b => (
+                                  <div key={b.id} className="flex flex-col items-center" title={b.description}>
+                                      {b.imageUrl ? (
+                                        <img src={b.imageUrl} alt={b.name} className="w-12 h-12 rounded-full object-cover border-2 border-amber-200 shadow-sm mb-1 bg-white" />
+                                      ) : (
+                                        <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center text-amber-600 text-xl mb-1 border-2 border-amber-200">
+                                            <i className={`fas ${b.icon}`}></i>
+                                        </div>
+                                      )}
+                                      <span className="text-[10px] font-bold text-slate-600 max-w-[60px] text-center leading-tight">{b.name}</span>
+                                  </div>
+                              ))}
+                          </div>
+                      )}
+                  </div>
+                  
+                  <div className="space-y-3">
+                      <h3 className="text-slate-500 font-bold text-xs uppercase ml-2">Extrato</h3>
+                      {data.transactions.filter(t => t.studentId === student.id).sort((a,b) => b.date.getTime() - a.date.getTime()).map(tx => (
+                          <div key={tx.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex justify-between items-center">
+                              <div>
+                                  <p className="font-bold text-slate-700 text-sm">
+                                      {tx.type === 'BADGE' ? 
+                                       `Medalha: ${data.badgesCatalog.find(b => b.id === tx.description)?.name || 'Conquista'}` : 
+                                       tx.description}
+                                  </p>
+                                  <p className="text-[10px] text-slate-400">{tx.date.toLocaleDateString()}</p>
+                              </div>
+                              {tx.amount > 0 && <span className="text-emerald-500 font-bold">+{tx.amount}</span>}
+                              {tx.type === 'BADGE' && <i className="fas fa-medal text-amber-500"></i>}
+                          </div>
+                      ))}
+                  </div>
+              </div>
+          </div>
+      );
   }
 
-  return null;
-};
+  return (
+    <div className="min-h-screen flex bg-slate-50 overflow-hidden font-sans text-slate-800 flex-col md:flex-row">
+      
+      {/* MOBILE HEADER */}
+      <div className="md:hidden h-16 bg-slate-900 flex items-center justify-between px-6 z-30 shadow-md flex-shrink-0">
+          <div className="flex items-center gap-2">
+             <i className="fas fa-gamepad text-indigo-400"></i>
+             <span className="text-white font-bold gamified-font">Mestres da Linguagem</span>
+          </div>
+          <button onClick={() => setIsMobileMenuOpen(true)} className="text-white text-xl p-2">
+             <i className="fas fa-bars"></i>
+          </button>
+      </div>
 
-export default App;
+      {/* MOBILE OVERLAY */}
+      {isMobileMenuOpen && (
+          <div 
+             className="fixed inset-0 bg-black/60 z-40 md:hidden backdrop-blur-sm animate-fade-in"
+             onClick={() => setIsMobileMenuOpen(false)}
+          ></div>
+      )}
+
+      {/* SIDEBAR (Responsive Drawer) */}
+      <aside 
+         className={`
+            fixed top-0 left-0 h-full w-64 bg-slate-900 text-white flex flex-col z-50 shadow-2xl 
+            transform transition-transform duration-300 ease-in-out
+            md:translate-x-0 md:static md:h-screen md:shadow-none
+            ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
+         `}
+      >
+         <div className="p-6 flex justify-between items-center">
+            <div>
+                <h1 className="text-xl font-bold gamified-font text-indigo-400"><i className="fas fa-gamepad mr-2"></i>Mestres da Linguagem</h1>
+                <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-1">Gestão v2.5</p>
+            </div>
+            <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden text-slate-400 hover:text-white">
+                <i className="fas fa-times"></i>
+            </button>
+         </div>
+         <nav className="flex-1 px-4 space-y-2 mt-4 overflow-y-auto">
+            {[
+                {id:'dashboard', icon:'fa-chalkboard-teacher', label:'Painel de Aulas'},
+                {id:'schools', icon:'fa-school', label:'Escolas & Turmas'},
+                {id:'catalog', icon:'fa-list-alt', label:'Missões & Medalhas'},
+                {id:'settings', icon:'fa-save', label:'Dados & Backup'}
+            ].map(item => (
+                <button key={item.id} onClick={() => setView(item.id as any)} className={`w-full text-left px-4 py-3 rounded-xl flex items-center gap-3 transition-colors font-medium text-sm ${view === item.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+                    <i className={`fas ${item.icon} w-5 text-center`}></i> {item.label}
+                </button>
+            ))}
+         </nav>
+         <div className="p-4 border-t border-slate-800 text-center flex-shrink-0">
+             <p className="text-[10px] text-slate-500">Desenvolvido com Gemini AI</p>
+         </div>
+      </aside>
+
+      {/* MAIN */}
+      <main className="flex-1 h-[calc(100vh-64px)] md:h-screen overflow-y-auto p-4 md:p-8 relative bg-slate-50">
+         
+         {/* --- VIEW: SETTINGS (BACKUP) --- */}
+         {view === 'settings' && (
+             <div className="max-w-2xl mx-auto animate-fade-in">
+                 <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-6">Segurança dos Dados</h2>
+                 <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-slate-200 text-center space-y-6">
+                     <div className="w-16 h-16 md:w-20 md:h-20 bg-indigo-50 rounded-full flex items-center justify-center mx-auto text-indigo-600 text-3xl mb-4">
+                         <i className="fas fa-database"></i>
+                     </div>
+                     <div>
+                         <h3 className="text-xl font-bold text-slate-800">Backup Manual</h3>
+                         <p className="text-slate-500 mt-2 max-w-md mx-auto text-sm md:text-base">Para garantir que você nunca perca o progresso dos seus alunos, faça o download do backup regularmente.</p>
+                     </div>
+                     <div className="flex flex-col sm:flex-row gap-4 justify-center pt-4">
+                         <Button onClick={exportDataToJSON} className="py-4 px-8 text-base w-full sm:w-auto">
+                            <i className="fas fa-download"></i> Baixar Backup
+                         </Button>
+                         <div className="relative w-full sm:w-auto">
+                             <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".json" className="hidden" />
+                             <Button variant="secondary" onClick={() => fileInputRef.current?.click()} className="py-4 px-8 text-base w-full">
+                                <i className="fas fa-upload"></i> Restaurar Dados
+                             </Button>
+                         </div>
+                     </div>
+                 </div>
+             </div>
+         )}
+
+         {/* --- VIEW: CATALOG --- */}
+         {view === 'catalog' && (
+             <div className="max-w-5xl mx-auto animate-fade-in">
+                 <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-6 md:mb-8">Catálogo Global</h2>
+                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 md:gap-8">
+                     {/* Tarefas */}
+                     <div className="bg-white p-4 md:p-6 rounded-3xl shadow-sm border border-slate-200">
+                         <div className="flex justify-between items-center mb-6">
+                             <h3 className="text-lg font-bold text-indigo-900"><i className="fas fa-tasks mr-2"></i> Missões Padrão</h3>
+                             <Button onClick={() => openModal('task', 'create')} className="text-xs">+ Nova Missão</Button>
+                         </div>
+                         <div className="space-y-3">
+                             {data.taskCatalog.length === 0 && <p className="text-center text-slate-400 py-4 italic">Nenhuma missão cadastrada.</p>}
+                             {data.taskCatalog.map(t => (
+                                 <div key={t.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100 hover:border-indigo-200 transition-colors">
+                                     <div className="min-w-0 pr-2">
+                                         <p className="font-bold text-slate-700 truncate">{t.title}</p>
+                                         <p className="text-xs text-slate-500 mb-1">Vale {t.defaultPoints} LXC</p>
+                                         <div className="flex gap-1 flex-wrap">
+                                             {t.bimesters && t.bimesters.map(b => (
+                                                 <span key={b} className="text-[9px] bg-slate-200 px-1.5 rounded text-slate-600 font-bold">{b}ºB</span>
+                                             ))}
+                                         </div>
+                                     </div>
+                                     <div className="flex gap-1 flex-shrink-0">
+                                        <Button variant="icon" onClick={(e: any) => { e.stopPropagation(); openModal('task', 'edit', t); }} title="Editar"><i className="fas fa-pen"></i></Button>
+                                        <Button variant="icon" onClick={(e: any) => requestDelete(e, 'task', t.id, undefined, t.title)} title="Excluir"><i className="fas fa-trash text-red-400"></i></Button>
+                                     </div>
+                                 </div>
+                             ))}
+                         </div>
+                     </div>
+                     {/* Badges */}
+                     <div className="bg-white p-4 md:p-6 rounded-3xl shadow-sm border border-slate-200">
+                         <div className="flex justify-between items-center mb-6">
+                             <h3 className="text-lg font-bold text-amber-600"><i className="fas fa-medal mr-2"></i> Medalhas</h3>
+                             <Button onClick={() => openModal('badge', 'create')} variant="warning" className="text-xs">+ Nova Medalha</Button>
+                         </div>
+                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                             {data.badgesCatalog.length === 0 && <p className="col-span-2 text-center text-slate-400 py-4 italic">Nenhuma medalha cadastrada.</p>}
+                             {data.badgesCatalog.map(b => (
+                                 <div key={b.id} className="flex items-center gap-3 p-3 bg-amber-50 rounded-xl border border-amber-100 relative hover:border-amber-300 transition-colors">
+                                     {b.imageUrl ? (
+                                        <img src={b.imageUrl} alt="Medalha" className="w-8 h-8 rounded-full object-cover border border-amber-200 shadow-sm flex-shrink-0" />
+                                     ) : (
+                                        <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center text-amber-500 shadow-sm flex-shrink-0"><i className={`fas ${b.icon}`}></i></div>
+                                     )}
+                                     <div className="flex-1 min-w-0">
+                                         <p className="font-bold text-xs text-amber-900 leading-tight truncate">{b.name}</p>
+                                         <div className="flex gap-1 mt-1 flex-wrap">
+                                             {b.bimesters && b.bimesters.map(bim => (
+                                                 <span key={bim} className="text-[8px] bg-white border border-amber-200 px-1 rounded text-amber-600 font-bold">{bim}º</span>
+                                             ))}
+                                         </div>
+                                     </div>
+                                     <div className="flex gap-1 bg-amber-50 rounded-lg flex-shrink-0">
+                                        <button onClick={(e) => { e.stopPropagation(); openModal('badge', 'edit', b); }} className="text-amber-400 hover:text-amber-600 p-1"><i className="fas fa-pen text-xs"></i></button>
+                                        <button onClick={(e) => requestDelete(e, 'badge', b.id, undefined, b.name)} className="text-red-300 hover:text-red-500 p-1"><i className="fas fa-trash text-xs"></i></button>
+                                     </div>
+                                 </div>
+                             ))}
+                         </div>
+                     </div>
+                 </div>
+             </div>
+         )}
+
+         {/* --- VIEW: SCHOOLS --- */}
+         {view === 'schools' && (
+             <div className="max-w-4xl mx-auto animate-fade-in">
+                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 md:mb-8 gap-4">
+                     <h2 className="text-2xl md:text-3xl font-bold text-slate-800">Estrutura Escolar</h2>
+                     <Button onClick={() => openModal('school', 'create')} className="w-full sm:w-auto">+ Nova Escola</Button>
+                 </div>
+                 
+                 <div className="space-y-6">
+                     {data.schools.length === 0 && <div className="text-center py-10 bg-white rounded-2xl border border-slate-200 border-dashed text-slate-400">Nenhuma escola cadastrada. Comece criando uma!</div>}
+                     {data.schools.map(school => (
+                         <div key={school.id} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+                             <div className="bg-slate-50 p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-100 gap-4">
+                                 <div className="flex items-center gap-3 w-full sm:w-auto">
+                                     <div className="w-10 h-10 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center flex-shrink-0"><i className="fas fa-school"></i></div>
+                                     <h3 className="font-bold text-lg text-slate-700 truncate">{school.name}</h3>
+                                 </div>
+                                 <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                                     <Button variant="icon" onClick={(e:any) => { e.stopPropagation(); openModal('school', 'edit', school); }} title="Renomear Escola"><i className="fas fa-pen"></i></Button>
+                                     <Button variant="icon" onClick={(e:any) => requestDelete(e, 'school', school.id, undefined, school.name)} title="Excluir Escola"><i className="fas fa-trash text-red-400"></i></Button>
+                                     <div className="hidden sm:block w-px h-6 bg-slate-300 mx-2"></div>
+                                     <button onClick={() => { setSelectedSchoolId(school.id); openModal('class', 'create'); }} className="text-indigo-600 text-sm font-bold hover:bg-indigo-50 px-3 py-1 rounded-lg transition-colors border border-indigo-200 bg-white whitespace-nowrap">+ Turma</button>
+                                 </div>
+                             </div>
+                             <div className="p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                                 {school.classes?.length === 0 && <p className="text-slate-400 text-sm italic p-2 col-span-full text-center">Nenhuma turma nesta escola.</p>}
+                                 {school.classes?.map(cls => (
+                                     <div key={cls.id} className="border border-slate-200 p-4 rounded-xl hover:border-indigo-300 transition-colors bg-white relative group">
+                                         <div className="flex justify-between items-start mb-2">
+                                            <h4 className="font-bold text-slate-800 truncate pr-6">{cls.name}</h4>
+                                            <span className="bg-slate-100 text-slate-500 text-[10px] font-bold px-2 py-1 rounded-full flex-shrink-0">{cls.students?.length || 0} alunos</span>
+                                         </div>
+                                         <div className="flex gap-2 mt-4">
+                                             <button onClick={() => { setSelectedSchoolId(school.id); setSelectedClassId(cls.id); setShowBatchImport(true); }} className="flex-1 bg-emerald-50 text-emerald-600 text-xs font-bold py-2 rounded-lg hover:bg-emerald-100 border border-emerald-100 flex items-center justify-center gap-1">
+                                                 <i className="fas fa-file-import"></i> Importar
+                                             </button>
+                                         </div>
+                                         <div className="absolute top-2 right-2 flex gap-1 bg-white p-1 rounded-lg shadow-sm border border-slate-100">
+                                            <button onClick={(e) => { e.stopPropagation(); openModal('class', 'edit', cls); }} className="p-1 text-slate-400 hover:text-indigo-500" title="Editar"><i className="fas fa-pen text-xs"></i></button>
+                                            <button onClick={(e) => requestDelete(e, 'class', cls.id, school.id, cls.name)} className="p-1 text-slate-400 hover:text-red-500" title="Excluir"><i className="fas fa-trash text-xs"></i></button>
+                                         </div>
+                                     </div>
+                                 ))}
+                             </div>
+                         </div>
+                     ))}
+                 </div>
+             </div>
+         )}
+
+         {/* --- VIEW: DASHBOARD (MAIN) --- */}
+         {view === 'dashboard' && (
+             <div className="flex flex-col h-full animate-fade-in">
+                 {/* Header Seletor */}
+                 <div className="flex flex-col md:flex-row items-center gap-4 mb-4 md:mb-6 bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
+                     <div className="flex-1 w-full md:w-auto">
+                         <label className="text-[10px] font-bold text-slate-400 uppercase">Escola</label>
+                         <select className="w-full bg-transparent font-bold text-slate-800 outline-none cursor-pointer py-1" value={selectedSchoolId} onChange={e => { setSelectedSchoolId(e.target.value); setSelectedClassId(''); }}>
+                             <option value="">Selecione...</option>
+                             {data.schools.map(school => <option key={school.id} value={school.id}>{school.name}</option>)}
+                         </select>
+                     </div>
+                     <div className="hidden md:block w-px h-8 bg-slate-200"></div>
+                     <div className="flex-1 w-full md:w-auto border-t md:border-t-0 border-slate-100 pt-2 md:pt-0">
+                         <label className="text-[10px] font-bold text-slate-400 uppercase">Turma</label>
+                         <select className="w-full bg-transparent font-bold text-slate-800 outline-none cursor-pointer py-1" value={selectedClassId} onChange={e => setSelectedClassId(e.target.value)}>
+                             <option value="">Selecione...</option>
+                             {currentSchool?.classes?.map(cls => <option key={cls.id} value={cls.id}>{cls.name}</option>)}
+                         </select>
+                     </div>
+                     <div className="flex bg-slate-100 rounded-lg p-1 w-full md:w-auto overflow-x-auto justify-between md:justify-start mt-2 md:mt-0">
+                         {[1,2,3,4].map(b => (
+                             <button key={b} onClick={() => setCurrentBimester(b as Bimester)} className={`flex-1 md:flex-none px-3 py-1 rounded-md text-xs font-bold transition-all whitespace-nowrap ${currentBimester === b ? 'bg-white shadow text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}>{b}º Bim</button>
+                         ))}
+                     </div>
+                 </div>
+
+                 {!selectedClassId ? (
+                     <div className="flex-1 flex flex-col items-center justify-center text-slate-300 py-20 md:py-0">
+                         <i className="fas fa-chalkboard-teacher text-6xl mb-4"></i>
+                         <p className="font-bold text-center">Selecione uma turma acima para começar</p>
+                     </div>
+                 ) : (
+                     <div className="flex flex-col lg:flex-row gap-6 h-full overflow-y-auto lg:overflow-hidden">
+                         {/* Lista Alunos */}
+                         <div className="flex-1 bg-white rounded-3xl border border-slate-200 overflow-hidden flex flex-col shadow-sm min-h-[400px]">
+                             <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                                 <button onClick={() => {
+                                     if(selectedStudentsForTask.length === studentsList.length) setSelectedStudentsForTask([]);
+                                     else setSelectedStudentsForTask(studentsList.map(s => s.id));
+                                 }} className="text-xs font-bold text-indigo-600 hover:underline">
+                                     {selectedStudentsForTask.length === studentsList.length ? 'Desmarcar' : 'Todos'}
+                                 </button>
+                                 <div className="flex items-center gap-2">
+                                     <span className="text-xs font-bold text-slate-400">{studentsList.length} Alunos</span>
+                                     <Button variant="success" className="py-1 px-2 text-xs h-8" onClick={() => setShowBatchImport(true)}>+ Importar</Button>
+                                 </div>
+                             </div>
+                             <div className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
+                                 {studentsList.length === 0 && <div className="text-center py-20 text-slate-400 italic">Lista vazia. Importe alunos.</div>}
+                                 {studentsList.map(student => {
+                                     const isSelected = selectedStudentsForTask.includes(student.id);
+                                     const level = getLevel(student.lxcTotal[currentBimester] || 0, currentBimester);
+                                     return (
+                                         <div key={student.id} 
+                                            onClick={() => setSelectedStudentsForTask(prev => prev.includes(student.id) ? prev.filter(id => id !== student.id) : [...prev, student.id])}
+                                            className={`p-3 rounded-xl flex items-center justify-between cursor-pointer border transition-all group ${isSelected ? 'bg-indigo-50 border-indigo-500 shadow-sm' : 'bg-white border-transparent hover:bg-slate-50'}`}
+                                         >
+                                             <div className="flex items-center gap-3 overflow-hidden">
+                                                 <div className={`w-10 h-10 rounded-full ${level.color} flex items-center justify-center text-white font-bold text-sm shadow-sm flex-shrink-0`}>{student.name.charAt(0)}</div>
+                                                 <div className="min-w-0">
+                                                     <p className="font-bold text-slate-700 text-sm truncate">{student.name}</p>
+                                                     <div className="flex gap-2">
+                                                         <span className="text-[10px] bg-slate-100 px-2 rounded-full text-slate-500 whitespace-nowrap">{level.title}</span>
+                                                         <button onClick={(e) => { e.stopPropagation(); setViewingStudentId(student.id); setView('student-view'); }} className="text-[10px] text-indigo-400 font-bold hover:underline whitespace-nowrap"><i className="fas fa-eye"></i> Ver</button>
+                                                     </div>
+                                                 </div>
+                                             </div>
+                                             <div className="flex items-center gap-4 pl-2 flex-shrink-0">
+                                                 <span className="font-mono font-bold text-slate-600">{student.lxcTotal[currentBimester] || 0}</span>
+                                                 <button onClick={(e) => requestDelete(e, 'student', student.id, undefined, student.name)} className="text-slate-300 hover:text-red-500 px-2" title="Excluir Aluno"><i className="fas fa-trash"></i></button>
+                                             </div>
+                                         </div>
+                                     );
+                                 })}
+                             </div>
+                         </div>
+
+                         {/* Painel de Ação */}
+                         <div className="w-full lg:w-80 bg-white rounded-3xl border border-slate-200 p-6 flex flex-col shadow-xl shadow-slate-200/50 lg:h-full h-auto flex-shrink-0">
+                             <div className="flex bg-slate-100 rounded-xl p-1 mb-6">
+                                 <button onClick={() => setIsGivingBadge(false)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${!isGivingBadge ? 'bg-white shadow text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}>Dar Pontos</button>
+                                 <button onClick={() => setIsGivingBadge(true)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${isGivingBadge ? 'bg-white shadow text-amber-500' : 'text-slate-400 hover:text-slate-600'}`}>Dar Medalha</button>
+                             </div>
+
+                             <div className="mb-4">
+                                 <div className="flex justify-between items-center mb-2">
+                                    <span className="text-xs font-bold text-slate-400 uppercase">
+                                        {isGivingBadge ? 'Escolher Medalha' : 'Escolher Missão'}
+                                    </span>
+                                    <button onClick={() => openModal(isGivingBadge ? 'badge' : 'task', 'create')} className="text-[10px] text-indigo-500 font-bold hover:underline">+ Criar Nova</button>
+                                 </div>
+                                 <select 
+                                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-indigo-500"
+                                    value={selectedTaskId}
+                                    onChange={e => {
+                                        setSelectedTaskId(e.target.value);
+                                        // Auto-fill logic for Tasks
+                                        if(!isGivingBadge) {
+                                            const t = data.taskCatalog.find(tsk => tsk.id === e.target.value);
+                                            if(t) { setManualDesc(t.title); setManualPoints(t.defaultPoints); }
+                                            else { setManualDesc(''); setManualPoints(10); }
+                                        }
+                                    }}
+                                 >
+                                     <option value="">{isGivingBadge ? '-- Selecione a Medalha --' : '-- Personalizado --'}</option>
+                                     
+                                     {/* FILTRAGEM DE TAREFAS PELO BIMESTRE ATUAL */}
+                                     {!isGivingBadge && filteredTasks.map(t => (
+                                         <option key={t.id} value={t.id}>{t.title} ({t.defaultPoints} pts)</option>
+                                     ))}
+
+                                     {/* FILTRAGEM DE MEDALHAS PELO BIMESTRE ATUAL */}
+                                     {isGivingBadge && filteredBadges.map(b => (
+                                         <option key={b.id} value={b.id}>{b.name}</option>
+                                     ))}
+                                 </select>
+                                 
+                                 {/* Mensagem se não houver opções para o bimestre atual */}
+                                 {((!isGivingBadge && filteredTasks.length === 0) || (isGivingBadge && filteredBadges.length === 0)) && (
+                                     <p className="text-[10px] text-orange-500 mt-2 font-bold italic">
+                                         <i className="fas fa-exclamation-circle"></i> Nada disponível para o {currentBimester}º Bimestre.
+                                     </p>
+                                 )}
+                             </div>
+
+                             {!isGivingBadge && !selectedTaskId && (
+                                 <div className="animate-fade-in space-y-4">
+                                     <Input placeholder="Motivo (ex: Ajudou colega)" value={manualDesc} onChange={(e:any) => setManualDesc(e.target.value)} />
+                                     <div className="flex items-center gap-2">
+                                         <button onClick={() => setManualPoints(p => p - 5)} className="w-10 h-10 bg-slate-100 rounded-lg font-bold hover:bg-slate-200 touch-manipulation">-</button>
+                                         <input type="number" className="flex-1 text-center font-bold text-xl py-2 border-b-2 border-indigo-100 outline-none bg-transparent" value={manualPoints} onChange={e => setManualPoints(Number(e.target.value))} />
+                                         <button onClick={() => setManualPoints(p => p + 5)} className="w-10 h-10 bg-slate-100 rounded-lg font-bold hover:bg-slate-200 touch-manipulation">+</button>
+                                     </div>
+                                 </div>
+                             )}
+
+                             <div className="mt-auto pt-4 md:pt-0">
+                                 <div className="bg-indigo-50 p-3 rounded-xl mb-4 flex justify-between items-center">
+                                     <span className="text-xs font-bold text-indigo-800">Alunos Selecionados:</span>
+                                     <span className="bg-white text-indigo-600 px-2 py-1 rounded text-xs font-bold shadow-sm">{selectedStudentsForTask.length}</span>
+                                 </div>
+                                 <Button onClick={giveRewards} className="w-full py-4 text-lg" variant={isGivingBadge ? 'warning' : 'primary'} disabled={selectedStudentsForTask.length === 0}>
+                                     {isGivingBadge ? 'Condecorar' : 'Confirmar'}
+                                 </Button>
+                             </div>
+                         </div>
+                     </div>
+                 )}
+             </div>
+         )}
+      </main>
+
+      {/* --- RENDERIZAÇÃO DOS MODAIS --- */}
+      
+      {/* 1. Modal Genérico (Escola, Turma, Tarefa, Medalha) */}
+      {modalConfig.isOpen && (
+        <GenericModal 
+          title={
+            modalConfig.mode === 'create' 
+            ? `Nova ${modalConfig.type === 'school' ? 'Escola' : modalConfig.type === 'class' ? 'Turma' : modalConfig.type === 'task' ? 'Tarefa' : 'Medalha'}`
+            : `Editar ${modalConfig.type === 'school' ? 'Escola' : modalConfig.type === 'class' ? 'Turma' : modalConfig.type === 'task' ? 'Tarefa' : 'Medalha'}`
+          }
+          onClose={closeModal}
+          onSave={handleModalSave}
+        >
+           <Input 
+             label="Nome / Título" 
+             value={formData.name} 
+             onChange={(e:any) => setFormData({...formData, name: e.target.value})} 
+             autoFocus
+           />
+           
+           {(modalConfig.type === 'task' || modalConfig.type === 'badge') && (
+             <Input 
+               label="Descrição" 
+               value={formData.description} 
+               onChange={(e:any) => setFormData({...formData, description: e.target.value})} 
+             />
+           )}
+
+           {modalConfig.type === 'task' && (
+             <div>
+               <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Pontos (LXC)</label>
+               <input 
+                 type="number" 
+                 value={formData.points} 
+                 onChange={(e:any) => setFormData({...formData, points: e.target.value})}
+                 className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500" 
+               />
+             </div>
+           )}
+
+           {modalConfig.type === 'badge' && (
+             <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Visual da Medalha</label>
+                
+                {/* Visual Preview */}
+                <div className="flex justify-center mb-4">
+                  {formData.imageUrl ? (
+                     <img src={formData.imageUrl} className="w-16 h-16 rounded-full object-cover border-4 border-indigo-100 shadow-lg" alt="Preview" />
+                  ) : (
+                     <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center text-3xl text-indigo-500 shadow-lg border-4 border-indigo-100">
+                       <i className={`fas ${formData.icon}`}></i>
+                     </div>
+                  )}
+                </div>
+
+                <div className="mb-4">
+                   <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Opção 1: Selecione um Ícone</p>
+                   <div className="grid grid-cols-6 sm:grid-cols-8 gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200 max-h-32 overflow-y-auto">
+                      {ICON_LIBRARY.map(ic => (
+                          <button 
+                            key={ic}
+                            onClick={() => setFormData({...formData, icon: ic, imageUrl: ''})}
+                            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${formData.icon === ic && !formData.imageUrl ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-slate-400 hover:text-indigo-500 border border-slate-200'}`}
+                          >
+                             <i className={`fas ${ic}`}></i>
+                          </button>
+                      ))}
+                   </div>
+                </div>
+
+                <Input 
+                    label="Opção 2: URL de Imagem (Substitui Ícone)" 
+                    placeholder="https://..." 
+                    value={formData.imageUrl}
+                    onChange={(e:any) => setFormData({...formData, imageUrl: e.target.value})}
+                />
+             </div>
+           )}
+
+           {/* SELETOR DE BIMESTRES (Apenas para Task e Badge) */}
+           {(modalConfig.type === 'task' || modalConfig.type === 'badge') && (
+               <div className="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                   <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Disponibilidade (Sazonalidade)</label>
+                   <div className="flex gap-2 flex-wrap">
+                       {[1, 2, 3, 4].map(b => (
+                           <button
+                             key={b}
+                             onClick={() => {
+                                 const current = formData.bimesters;
+                                 if (current.includes(b as Bimester)) {
+                                     setFormData({...formData, bimesters: current.filter(x => x !== b)});
+                                 } else {
+                                     setFormData({...formData, bimesters: [...current, b as Bimester].sort()});
+                                 }
+                             }}
+                             className={`w-10 h-10 rounded-lg font-bold text-sm transition-all border-2 flex items-center justify-center ${formData.bimesters.includes(b as Bimester) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-400 border-slate-200 hover:border-indigo-300'}`}
+                           >
+                               {b}º
+                           </button>
+                       ))}
+                   </div>
+                   <p className="text-[10px] text-slate-400 mt-2">
+                       Selecione em quais bimestres este item aparecerá na lista.
+                   </p>
+               </div>
+           )}
+        </GenericModal>
+      )}
+
+      {/* 2. Modal de Confirmação de Exclusão (SUBSTITUI WINDOW.CONFIRM) */}
+      <ConfirmationModal 
+          isOpen={deleteConfig.isOpen}
+          title="Confirmar Exclusão"
+          message={`Tem certeza que deseja excluir "${deleteConfig.itemName || 'este item'}"? Esta ação é irreversível.`}
+          onClose={() => setDeleteConfig({ ...deleteConfig, isOpen: false })}
+          onConfirm={executeDelete}
+      />
+
+      {/* 3. Modal de Importação em Lote */}
+      {showBatchImport && <BatchStudentModal onClose={() => setShowBatchImport(false)} onSave={batchImportStudents} />}
+    </div>
+  );
+}

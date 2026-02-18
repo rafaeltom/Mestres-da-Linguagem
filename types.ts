@@ -8,30 +8,22 @@ export interface LevelRule {
   color: string;
 }
 
-export interface Message {
-  id: string;
-  text: string;
-  date: Date;
-  fromStudent: boolean; // true = aluno enviou, false = professor respondeu
-  read: boolean;
-}
-
 export interface Student {
   id: string;
   name: string;
   classId: string;
   schoolId: string;
-  avatarId: string; // ex: 'hero-1', 'hero-2'
-  lxcTotal: { [key in Bimester]: number }; // Saldo por bimestre
-  badges: string[]; // IDs das medalhas conquistadas
-  messages: Message[];
+  avatarId: string; 
+  lxcTotal: { [key in Bimester]: number }; 
+  badges: string[]; // IDs das medalhas
   walletAddress?: string;
   encryptedPrivateKey?: string;
+  messages?: string[];
 }
 
 export interface ClassGroup {
   id: string;
-  name: string; // Ex: 9º Ano A
+  name: string; 
   schoolId: string;
   students?: Student[];
 }
@@ -45,27 +37,32 @@ export interface School {
 export interface Transaction {
   id: string;
   studentId: string;
-  type: 'TASK' | 'BONUS' | 'PENALTY' | 'SHOP' | 'BADGE';
+  type: 'TASK' | 'BONUS' | 'PENALTY' | 'BADGE';
   amount: number;
   description: string;
   bimester: Bimester;
   date: Date;
-  teacherId: string;
+  studentName?: string;
+  hash?: string;
 }
 
-export interface TaskCatalog {
+// Novo: Definição de Tarefa Padrão (O "Cardápio")
+export interface TaskDefinition {
   id: string;
   title: string;
-  defaultPoints: number;
   description: string;
+  defaultPoints: number;
+  bimesters: Bimester[]; // Quais bimestres essa tarefa está disponível
 }
 
 export interface Badge {
   id: string;
   name: string;
-  icon: string;
+  icon: string; // Classe do FontAwesome (ex: fa-star)
+  imageUrl?: string; // URL de imagem externa (opcional)
   description: string;
-  lxcBonus: number;
+  bimesters: Bimester[]; // Quais bimestres essa medalha está disponível
+  cost?: number; // Se custar algo para comprar (futuro)
 }
 
 export interface SchoolStats {

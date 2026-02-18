@@ -1,7 +1,7 @@
 
 import { initializeApp } from "firebase/app";
 import { getAnalytics } from "firebase/analytics";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, Firestore } from "firebase/firestore";
 
 // Configuração do Firebase fornecida pelo console
 const firebaseConfig = {
@@ -27,14 +27,8 @@ if (typeof window !== 'undefined') {
   }
 }
 
-// Inicializa o Firestore (Banco de Dados) de forma segura
-let db: any;
-try {
-  db = getFirestore(app);
-} catch (error) {
-  console.error("Erro fatal ao inicializar Firestore. Verifique o importmap.", error);
-  // Define como null para permitir que o app carregue sem o DB se necessário, mostrando erro na UI depois
-  db = null;
-}
+// Inicializa o Firestore (Banco de Dados)
+// A inicialização direta aqui é segura agora que o importmap foi corrigido.
+const db = getFirestore(app);
 
 export { app, analytics, db };

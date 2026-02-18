@@ -27,22 +27,23 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, c
         <div key={tx.id} className="p-4 rounded-xl bg-slate-950/50 border border-slate-800 hover:border-indigo-500/30 transition-all group">
           <div className="flex justify-between items-start mb-2">
             <div>
-              <p className="text-sm font-bold text-slate-200">{tx.studentName}</p>
+              <p className="text-sm font-bold text-slate-200">{tx.studentName || 'Aluno Desconhecido'}</p>
               <p className="text-[10px] text-slate-500 uppercase tracking-tighter line-clamp-1">{tx.description}</p>
             </div>
             <div className="text-right">
               <span className={`text-sm font-bold ${tx.amount > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                 {tx.amount > 0 ? '+' : ''}{tx.amount} LC
               </span>
-              <p className="text-[10px] text-slate-500">{new Date(tx.timestamp).toLocaleTimeString()}</p>
+              <p className="text-[10px] text-slate-500">{new Date(tx.date).toLocaleTimeString()}</p>
             </div>
           </div>
           
           <div className="mt-2 pt-2 border-t border-slate-800 flex items-center justify-between">
             <div className="flex items-center gap-2 overflow-hidden">
               <i className="fas fa-link text-[10px] text-slate-600"></i>
-              <code className="text-[9px] text-slate-600 font-mono truncate">{tx.hash}</code>
+              <code className="text-[9px] text-slate-600 font-mono truncate">{tx.hash || 'Off-chain'}</code>
             </div>
+            {tx.hash && (
             <a 
               href={`${explorerUrl}/tx/${tx.hash}?cluster=${network}`}
               target="_blank"
@@ -51,6 +52,7 @@ const TransactionHistory: React.FC<TransactionHistoryProps> = ({ transactions, c
             >
               Solscan <i className="fas fa-external-link-alt text-[8px]"></i>
             </a>
+            )}
           </div>
         </div>
       ))}
