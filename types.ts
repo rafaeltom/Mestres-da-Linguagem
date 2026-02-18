@@ -11,6 +11,7 @@ export interface LevelRule {
 export interface Student {
   id: string;
   name: string;
+  nickname?: string; // Novo: Apelido escolhido pelo aluno
   classId: string;
   schoolId: string;
   avatarId: string; 
@@ -61,6 +62,7 @@ export interface Badge {
   icon: string; // Classe do FontAwesome (ex: fa-star)
   imageUrl?: string; // URL de imagem externa (opcional)
   description: string;
+  rewardValue?: number; // Novo: Recompensa opcional em LXC ao ganhar a medalha
   bimesters: Bimester[]; // Quais bimestres essa medalha está disponível
   cost?: number; // Se custar algo para comprar (futuro)
 }

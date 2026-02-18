@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { Bimester, Student, School, ClassGroup, Transaction, TaskDefinition, Badge } from './types';
+import { Bimester, Student, School, ClassGroup, Transaction, TaskDefinition, Badge, LevelRule } from './types';
 import { getLevel, getNextLevel } from './utils/gamificationRules';
 import { loadData, saveData, AppData, addTransaction, getAllStudents, exportDataToJSON, importDataFromJSON } from './services/localStorageService';
 
@@ -112,6 +112,71 @@ const BatchStudentModal = ({ onClose, onSave }: any) => {
   );
 };
 
+// --- LOGIN COMPONENT ---
+const LoginScreen = ({ onLogin }: { onLogin: (e: string, p: string) => boolean }) => {
+    const [email, setEmail] = useState('');
+    const [pass, setPass] = useState('');
+    const [error, setError] = useState('');
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if(onLogin(email, pass)) {
+            setError('');
+        } else {
+            setError('Credenciais inválidas.');
+        }
+    };
+
+    return (
+        <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4 font-sans">
+            <div className="bg-white rounded-3xl p-8 w-full max-w-sm shadow-2xl animate-fade-in relative overflow-hidden">
+                <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-amber-500"></div>
+                
+                <div className="flex flex-col items-center mb-8">
+                    <div className="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center text-3xl text-indigo-400 shadow-lg mb-4">
+                        <i className="fas fa-gamepad"></i>
+                    </div>
+                    <h1 className="text-2xl font-black gamified-font text-slate-800 text-center">Mestres da Linguagem</h1>
+                    <p className="text-xs text-slate-400 font-bold tracking-widest uppercase mt-1">Área Restrita</p>
+                </div>
+
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Email</label>
+                        <input 
+                            type="email" 
+                            className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors"
+                            value={email}
+                            onChange={e => setEmail(e.target.value)}
+                            placeholder="usuario@email.com"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Senha</label>
+                        <input 
+                            type="password" 
+                            className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors"
+                            value={pass}
+                            onChange={e => setPass(e.target.value)}
+                            placeholder="••••••••"
+                        />
+                    </div>
+                    
+                    {error && <p className="text-xs text-red-500 font-bold text-center bg-red-50 p-2 rounded-lg">{error}</p>}
+
+                    <button className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl shadow-lg shadow-indigo-200 transition-all flex items-center justify-center gap-2">
+                        <i className="fas fa-sign-in-alt"></i> Entrar no Sistema
+                    </button>
+                </form>
+
+                <p className="text-[10px] text-center text-slate-400 mt-6">
+                    &copy; 2024 Projeto Mestres. Todos os direitos reservados.
+                </p>
+            </div>
+        </div>
+    );
+};
+
 // --- APP PRINCIPAL ---
 
 export default function App() {
@@ -119,6 +184,9 @@ export default function App() {
   const [view, setView] = useState<'dashboard' | 'schools' | 'catalog' | 'settings' | 'student-view'>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
+  // Auth State
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
   // Contexto de Seleção
   const [selectedSchoolId, setSelectedSchoolId] = useState<string>('');
   const [selectedClassId, setSelectedClassId] = useState<string>('');
@@ -150,7 +218,8 @@ export default function App() {
     points: 10,
     icon: 'fa-medal',
     imageUrl: '',
-    bimesters: [1, 2, 3, 4] as Bimester[] // Default all
+    rewardValue: 0, 
+    bimesters: [1, 2, 3, 4] as Bimester[] 
   });
 
   // Outros Modais
@@ -167,6 +236,13 @@ export default function App() {
 
   // --- INICIALIZAÇÃO ---
   useEffect(() => {
+    // Check Auth
+    const storedAuth = localStorage.getItem('mestres_auth_token');
+    if(storedAuth === 'valid_session_secured') {
+        setIsAuthenticated(true);
+    }
+
+    // Load Data
     const loaded = loadData();
     setData(loaded);
     if (loaded.schools.length > 0) {
@@ -182,6 +258,39 @@ export default function App() {
     setIsMobileMenuOpen(false);
   }, [view]);
 
+  // --- AUTH HANDLERS ---
+  const performLogin = (email: string, pass: string): boolean => {
+      // Credenciais Hardcoded (Security Minimum Demand)
+      if(email === 'rafaelalmeida293@gmail.com' && pass === 'Swf#123swf') {
+          setIsAuthenticated(true);
+          localStorage.setItem('mestres_auth_token', 'valid_session_secured');
+          return true;
+      }
+      return false;
+  };
+
+  const performLogout = () => {
+      setIsAuthenticated(false);
+      localStorage.removeItem('mestres_auth_token');
+  };
+
+  // --- HELPER: ATUALIZAR ALUNO ---
+  const updateStudentNickname = (studentId: string, nickname: string) => {
+    const newData = JSON.parse(JSON.stringify(data));
+    newData.schools.forEach((s: School) => {
+        s.classes?.forEach((c: ClassGroup) => {
+            if(c.students) {
+                c.students = c.students.map((std: Student) => {
+                    if(std.id === studentId) return { ...std, nickname };
+                    return std;
+                });
+            }
+        });
+    });
+    setData(newData);
+    saveData(newData);
+  };
+
   // --- CRUD HANDLERS ---
 
   const openModal = (type: 'school' | 'class' | 'task' | 'badge', mode: 'create' | 'edit', dataItem?: any) => {
@@ -192,6 +301,7 @@ export default function App() {
       points: dataItem?.defaultPoints || 10,
       icon: dataItem?.icon || 'fa-medal',
       imageUrl: dataItem?.imageUrl || '',
+      rewardValue: dataItem?.rewardValue || 0,
       bimesters: dataItem?.bimesters || [1, 2, 3, 4] // Load existing bimesters or default to all
     });
     setModalConfig({ isOpen: true, type, mode, editingId: dataItem?.id, initialData: dataItem });
@@ -199,12 +309,12 @@ export default function App() {
 
   const closeModal = () => {
     setModalConfig({ ...modalConfig, isOpen: false });
-    setFormData({ name: '', description: '', points: 10, icon: 'fa-medal', imageUrl: '', bimesters: [1,2,3,4] });
+    setFormData({ name: '', description: '', points: 10, icon: 'fa-medal', imageUrl: '', rewardValue: 0, bimesters: [1,2,3,4] });
   };
 
   const handleModalSave = () => {
     const { type, mode, editingId } = modalConfig;
-    const { name, description, points, icon, bimesters, imageUrl } = formData;
+    const { name, description, points, icon, bimesters, imageUrl, rewardValue } = formData;
     
     if (!name.trim()) return alert("O nome é obrigatório.");
     if ((type === 'task' || type === 'badge') && bimesters.length === 0) return alert("Selecione pelo menos um bimestre.");
@@ -272,6 +382,7 @@ export default function App() {
             icon, 
             imageUrl,
             description,
+            rewardValue: Number(rewardValue),
             bimesters: bimesters
         });
       } else {
@@ -281,6 +392,7 @@ export default function App() {
             badge.icon = icon; 
             badge.imageUrl = imageUrl;
             badge.description = description; 
+            badge.rewardValue = Number(rewardValue);
             badge.bimesters = bimesters;
         }
       }
@@ -377,12 +489,15 @@ export default function App() {
           const badge = data.badgesCatalog.find(b => b.id === selectedTaskId);
           if(!badge) return;
 
+          // Se a medalha tem valor, adicionamos o valor na transação
+          const rewardAmount = badge.rewardValue || 0;
+
           selectedStudentsForTask.forEach(sid => {
               const tx: Transaction = {
                   id: uuidv4(),
                   studentId: sid,
                   type: 'BADGE',
-                  amount: 0,
+                  amount: rewardAmount, // Valor da medalha se houver
                   description: badge.id,
                   bimester: currentBimester,
                   date: new Date()
@@ -447,6 +562,11 @@ export default function App() {
   const filteredTasks = data.taskCatalog.filter(t => t.bimesters && t.bimesters.includes(currentBimester));
   const filteredBadges = data.badgesCatalog.filter(b => b.bimesters && b.bimesters.includes(currentBimester));
 
+  // --- AUTH CHECK ---
+  if (!isAuthenticated) {
+      return <LoginScreen onLogin={performLogin} />;
+  }
+
   // --- VIEW: STUDENT ---
   if(view === 'student-view') {
       const student = getAllStudents(data.schools).find(s => s.id === viewingStudentId);
@@ -455,53 +575,133 @@ export default function App() {
       const level = getLevel(total, currentBimester);
       const myBadges = data.badgesCatalog.filter(b => student.badges?.includes(b.id));
 
+      // Algoritmo para calcular timeline de Níveis
+      const studentTransactions = data.transactions
+        .filter(t => t.studentId === student.id && t.bimester === currentBimester)
+        .sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+      let runningBalance = 0;
+      let currentLevelTitle = getLevel(0, currentBimester).title;
+      
+      const timelineEvents = studentTransactions.map(tx => {
+         runningBalance += tx.amount;
+         const newLevel = getLevel(runningBalance, currentBimester);
+         let levelUpData = null;
+         
+         if (newLevel.title !== currentLevelTitle) {
+             levelUpData = { prev: currentLevelTitle, next: newLevel.title, level: newLevel };
+             currentLevelTitle = newLevel.title;
+         }
+         return { ...tx, levelUpData, runningBalance };
+      }).reverse();
+
       return (
           <div className="min-h-screen bg-slate-100 font-sans pb-10">
               <div className={`${level.color} text-white p-8 rounded-b-[3rem] shadow-xl relative`}>
                   <button onClick={() => setView('dashboard')} className="absolute top-4 left-4 bg-white/20 px-3 py-1 rounded-full text-xs font-bold hover:bg-white/30 transition-all z-10"><i className="fas fa-arrow-left"></i> Voltar</button>
                   <div className="flex flex-col items-center mt-4">
-                      <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center text-4xl text-slate-700 font-bold mb-2 shadow-lg">{student.name.charAt(0)}</div>
-                      <h1 className="text-2xl font-bold text-center">{student.name}</h1>
-                      <span className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold uppercase">{level.title}</span>
-                      <div className="mt-4 text-5xl font-black gamified-font">{total} <span className="text-sm opacity-70">LXC</span></div>
+                      <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center text-5xl text-slate-700 font-bold mb-4 shadow-lg border-4 border-white/30 relative">
+                        {student.name.charAt(0)}
+                        <button 
+                            onClick={() => {
+                                const newNick = prompt("Escolha seu Nickname:", student.nickname || "");
+                                if(newNick !== null) updateStudentNickname(student.id, newNick);
+                            }}
+                            className="absolute bottom-0 right-0 w-8 h-8 bg-indigo-500 hover:bg-indigo-600 rounded-full flex items-center justify-center text-white text-xs shadow-md border-2 border-white"
+                            title="Editar Nickname"
+                        >
+                            <i className="fas fa-pen"></i>
+                        </button>
+                      </div>
+                      
+                      {student.nickname && (
+                          <h1 className="text-3xl font-black gamified-font mb-1 tracking-wide">{student.nickname}</h1>
+                      )}
+                      <h2 className={`${student.nickname ? 'text-sm opacity-80 font-medium' : 'text-2xl font-bold'}`}>{student.name}</h2>
+                      
+                      <div className="mt-4 flex items-center gap-2">
+                        <span className="bg-white/20 px-4 py-1.5 rounded-full text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+                            <i className="fas fa-crown"></i> {level.title}
+                        </span>
+                      </div>
+
+                      <div className="mt-6 text-6xl font-black gamified-font drop-shadow-md">{total} <span className="text-lg opacity-70 font-bold">LXC</span></div>
                   </div>
               </div>
               
-              <div className="max-w-md mx-auto px-6 -mt-6 relative z-10">
-                  <div className="bg-white p-6 rounded-2xl shadow-lg mb-6">
-                      <h3 className="text-slate-500 font-bold text-xs uppercase mb-4 flex items-center gap-2"><i className="fas fa-medal text-amber-500"></i> Suas Medalhas</h3>
-                      {myBadges.length === 0 ? <p className="text-slate-400 text-sm italic">Ainda sem medalhas.</p> : (
-                          <div className="flex flex-wrap gap-4 justify-center sm:justify-start">
+              <div className="max-w-md mx-auto px-6 -mt-8 relative z-10 space-y-6">
+                  {/* BADGES EM DESTAQUE */}
+                  <div className="bg-white p-6 rounded-3xl shadow-lg border-2 border-amber-100">
+                      <div className="flex justify-between items-center mb-4">
+                          <h3 className="text-slate-700 font-bold text-sm uppercase flex items-center gap-2"><i className="fas fa-medal text-amber-500 text-lg"></i> Hall de Medalhas</h3>
+                          <span className="bg-amber-100 text-amber-700 text-xs font-bold px-2 py-1 rounded-full">{myBadges.length}</span>
+                      </div>
+                      
+                      {myBadges.length === 0 ? <p className="text-slate-400 text-sm italic text-center py-4">Sua coleção de medalhas está vazia. Continue se esforçando!</p> : (
+                          <div className="flex flex-wrap gap-4 justify-center">
                               {myBadges.map(b => (
-                                  <div key={b.id} className="flex flex-col items-center" title={b.description}>
+                                  <div key={b.id} className="flex flex-col items-center group relative cursor-pointer">
                                       {b.imageUrl ? (
-                                        <img src={b.imageUrl} alt={b.name} className="w-12 h-12 rounded-full object-cover border-2 border-amber-200 shadow-sm mb-1 bg-white" />
+                                        <img src={b.imageUrl} alt={b.name} className="w-16 h-16 rounded-full object-cover border-4 border-amber-200 shadow-md mb-2 bg-white transition-transform group-hover:scale-110" />
                                       ) : (
-                                        <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center text-amber-600 text-xl mb-1 border-2 border-amber-200">
+                                        <div className="w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center text-amber-500 text-3xl mb-2 border-4 border-amber-200 shadow-md transition-transform group-hover:scale-110">
                                             <i className={`fas ${b.icon}`}></i>
                                         </div>
                                       )}
-                                      <span className="text-[10px] font-bold text-slate-600 max-w-[60px] text-center leading-tight">{b.name}</span>
+                                      <span className="text-[10px] font-bold text-slate-600 max-w-[80px] text-center leading-tight bg-slate-100 px-2 py-1 rounded-full">{b.name}</span>
                                   </div>
                               ))}
                           </div>
                       )}
                   </div>
                   
-                  <div className="space-y-3">
-                      <h3 className="text-slate-500 font-bold text-xs uppercase ml-2">Extrato</h3>
-                      {data.transactions.filter(t => t.studentId === student.id).sort((a,b) => b.date.getTime() - a.date.getTime()).map(tx => (
-                          <div key={tx.id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex justify-between items-center">
-                              <div>
-                                  <p className="font-bold text-slate-700 text-sm">
-                                      {tx.type === 'BADGE' ? 
-                                       `Medalha: ${data.badgesCatalog.find(b => b.id === tx.description)?.name || 'Conquista'}` : 
-                                       tx.description}
-                                  </p>
-                                  <p className="text-[10px] text-slate-400">{tx.date.toLocaleDateString()}</p>
+                  {/* EXTRATO COM TIMELINE DE NÍVEIS */}
+                  <div className="space-y-4">
+                      <h3 className="text-slate-500 font-bold text-xs uppercase ml-4 tracking-widest">Linha do Tempo</h3>
+                      {timelineEvents.length === 0 && <div className="text-center text-slate-400 italic">Nenhuma atividade registrada neste bimestre.</div>}
+                      {timelineEvents.map((tx: any) => (
+                          <div key={tx.id}>
+                              {/* Evento de Level Up */}
+                              {tx.levelUpData && (
+                                  <div className="my-6 text-center animate-fade-in">
+                                      <div className="inline-block bg-gradient-to-r from-indigo-500 to-purple-600 text-white px-6 py-2 rounded-full shadow-lg shadow-indigo-500/30 transform hover:scale-105 transition-transform">
+                                          <p className="text-xs font-bold uppercase opacity-80 mb-1">Promoção Conquistada!</p>
+                                          <div className="flex items-center gap-2 text-sm font-black">
+                                              <span>{tx.levelUpData.prev}</span>
+                                              <i className="fas fa-arrow-right"></i>
+                                              <span className="text-lg text-yellow-300"><i className="fas fa-crown mr-1"></i> {tx.levelUpData.next}</span>
+                                          </div>
+                                      </div>
+                                      <div className="h-4 w-0.5 bg-slate-300 mx-auto mt-2"></div>
+                                  </div>
+                              )}
+
+                              <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex justify-between items-center relative overflow-hidden">
+                                  {/* Indicador lateral */}
+                                  <div className={`absolute left-0 top-0 bottom-0 w-1 ${tx.amount > 0 ? 'bg-emerald-400' : 'bg-red-400'}`}></div>
+                                  
+                                  <div className="pl-3">
+                                      <p className="font-bold text-slate-700 text-sm">
+                                          {tx.type === 'BADGE' ? (
+                                            <span className="flex items-center gap-2 text-amber-600">
+                                                <i className="fas fa-medal"></i>
+                                                {data.badgesCatalog.find(b => b.id === tx.description)?.name || 'Nova Medalha'}
+                                            </span>
+                                          ) : tx.description}
+                                      </p>
+                                      <p className="text-[10px] text-slate-400 mt-1 flex items-center gap-2">
+                                          <i className="far fa-clock"></i> {new Date(tx.date).toLocaleDateString()}
+                                      </p>
+                                  </div>
+                                  <div className="text-right">
+                                      <div className={`font-black text-lg ${tx.amount > 0 ? 'text-emerald-500' : 'text-slate-400'}`}>
+                                          {tx.amount > 0 ? '+' : ''}{tx.amount}
+                                      </div>
+                                      <div className="text-[9px] font-bold text-slate-300 uppercase">LXC</div>
+                                  </div>
                               </div>
-                              {tx.amount > 0 && <span className="text-emerald-500 font-bold">+{tx.amount}</span>}
-                              {tx.type === 'BADGE' && <i className="fas fa-medal text-amber-500"></i>}
+                              {/* Linha conectora simples se não for o último */}
+                              <div className="h-4 w-0.5 bg-slate-200 mx-auto -mb-2 last:hidden"></div>
                           </div>
                       ))}
                   </div>
@@ -562,8 +762,11 @@ export default function App() {
                 </button>
             ))}
          </nav>
-         <div className="p-4 border-t border-slate-800 text-center flex-shrink-0">
-             <p className="text-[10px] text-slate-500">Desenvolvido com Gemini AI</p>
+         <div className="p-4 border-t border-slate-800 flex flex-col gap-2">
+             <button onClick={performLogout} className="w-full text-left px-4 py-2 rounded-xl flex items-center gap-3 transition-colors font-medium text-sm text-red-400 hover:bg-red-500/10">
+                 <i className="fas fa-sign-out-alt w-5 text-center"></i> Sair do Sistema
+             </button>
+             <p className="text-[10px] text-slate-500 text-center mt-2">Desenvolvido com Gemini AI</p>
          </div>
       </aside>
 
@@ -646,6 +849,9 @@ export default function App() {
                                      )}
                                      <div className="flex-1 min-w-0">
                                          <p className="font-bold text-xs text-amber-900 leading-tight truncate">{b.name}</p>
+                                         {b.rewardValue && b.rewardValue > 0 ? (
+                                             <p className="text-[9px] text-emerald-600 font-bold">+ {b.rewardValue} LXC</p>
+                                         ) : null}
                                          <div className="flex gap-1 mt-1 flex-wrap">
                                              {b.bimesters && b.bimesters.map(bim => (
                                                  <span key={bim} className="text-[8px] bg-white border border-amber-200 px-1 rounded text-amber-600 font-bold">{bim}º</span>
@@ -775,7 +981,10 @@ export default function App() {
                                              <div className="flex items-center gap-3 overflow-hidden">
                                                  <div className={`w-10 h-10 rounded-full ${level.color} flex items-center justify-center text-white font-bold text-sm shadow-sm flex-shrink-0`}>{student.name.charAt(0)}</div>
                                                  <div className="min-w-0">
-                                                     <p className="font-bold text-slate-700 text-sm truncate">{student.name}</p>
+                                                     <div className="flex items-center gap-2">
+                                                         <p className="font-bold text-slate-700 text-sm truncate">{student.nickname || student.name}</p>
+                                                         {student.nickname && <span className="text-[9px] text-slate-400 hidden sm:inline">({student.name})</span>}
+                                                     </div>
                                                      <div className="flex gap-2">
                                                          <span className="text-[10px] bg-slate-100 px-2 rounded-full text-slate-500 whitespace-nowrap">{level.title}</span>
                                                          <button onClick={(e) => { e.stopPropagation(); setViewingStudentId(student.id); setView('student-view'); }} className="text-[10px] text-indigo-400 font-bold hover:underline whitespace-nowrap"><i className="fas fa-eye"></i> Ver</button>
@@ -909,6 +1118,18 @@ export default function App() {
 
            {modalConfig.type === 'badge' && (
              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Recompensa Extra (Opcional)</label>
+                <div className="flex items-center gap-2 mb-4">
+                    <input 
+                        type="number" 
+                        value={formData.rewardValue} 
+                        onChange={(e:any) => setFormData({...formData, rewardValue: e.target.value})}
+                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500" 
+                        placeholder="0"
+                    />
+                    <span className="font-bold text-slate-500 text-sm">LXC</span>
+                </div>
+
                 <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Visual da Medalha</label>
                 
                 {/* Visual Preview */}
