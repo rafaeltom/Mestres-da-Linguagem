@@ -15,7 +15,7 @@ const SchoolManager: React.FC<SchoolManagerProps> = ({ schools, setSchools }) =>
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedSchool = schools.find(s => s.id === selectedSchoolId);
-  const selectedClass = selectedSchool?.classes.find(c => c.id === selectedClassId);
+  const selectedClass = selectedSchool?.classes?.find(c => c.id === selectedClassId);
 
   const handleAddClass = (schoolId: string) => {
     const className = prompt("Nome da nova turma (ex: 9º Ano A):");
@@ -25,7 +25,7 @@ const SchoolManager: React.FC<SchoolManagerProps> = ({ schools, setSchools }) =>
       if (school.id === schoolId) {
         return {
           ...school,
-          classes: [...school.classes, { id: Date.now().toString(), name: className, students: [] }]
+          classes: [...(school.classes || []), { id: Date.now().toString(), name: className, students: [], schoolId: schoolId }]
         };
       }
       return school;
@@ -44,15 +44,15 @@ const SchoolManager: React.FC<SchoolManagerProps> = ({ schools, setSchools }) =>
       if (school.id === selectedSchoolId) {
         return {
           ...school,
-          classes: school.classes.map(cls => {
+          classes: school.classes?.map(cls => {
             if (cls.id === selectedClassId) {
               return {
                 ...cls,
-                students: cls.students.map(std => std.id === studentId ? { ...std, ...updates } : std)
+                students: cls.students?.map(std => std.id === studentId ? { ...std, ...updates } : std) || []
               };
             }
             return cls;
-          })
+          }) || []
         };
       }
       return school;
@@ -71,17 +71,23 @@ const SchoolManager: React.FC<SchoolManagerProps> = ({ schools, setSchools }) =>
       const newStudents: Student[] = parsedStudents.map(p => ({
         id: Math.random().toString(36).substr(2, 9),
         name: p.name || "Aluno Sem Nome",
-        walletAddress: "", // Será gerada depois ou manualmente
-        balance: 0
+        classId: selectedClassId,
+        schoolId: selectedSchoolId,
+        avatarId: 'hero-1',
+        lxcTotal: { 1: 0, 2: 0, 3: 0, 4: 0 },
+        badges: [],
+        messages: [],
+        walletAddress: "", 
+        encryptedPrivateKey: ""
       }));
 
       setSchools(prev => prev.map(school => {
         if (school.id === selectedSchoolId) {
           return {
             ...school,
-            classes: school.classes.map(cls => {
+            classes: school.classes?.map(cls => {
               if (cls.id === selectedClassId) {
-                return { ...cls, students: [...cls.students, ...newStudents] };
+                return { ...cls, students: [...(cls.students || []), ...newStudents] };
               }
               return cls;
             })
@@ -95,21 +101,21 @@ const SchoolManager: React.FC<SchoolManagerProps> = ({ schools, setSchools }) =>
 
   const handleBulkWalletGeneration = () => {
     if (!selectedClass || !selectedSchoolId) return;
-    if (!confirm(`Deseja gerar carteiras automaticamente para ${selectedClass.students.filter(s => !s.walletAddress).length} alunos sem carteira?`)) return;
+    if (!confirm(`Deseja gerar carteiras automaticamente para ${selectedClass.students?.filter(s => !s.walletAddress).length || 0} alunos sem carteira?`)) return;
 
     setSchools(prev => prev.map(school => {
         if (school.id === selectedSchoolId) {
           return {
             ...school,
-            classes: school.classes.map(cls => {
+            classes: school.classes?.map(cls => {
               if (cls.id === selectedClassId) {
-                const updatedStudents = cls.students.map(std => {
+                const updatedStudents = cls.students?.map(std => {
                     if(!std.walletAddress) {
                         const w = generateStudentWallet();
                         return { ...std, walletAddress: w.publicKey, encryptedPrivateKey: w.secretKey };
                     }
                     return std;
-                });
+                }) || [];
                 return { ...cls, students: updatedStudents };
               }
               return cls;
@@ -135,12 +141,12 @@ const SchoolManager: React.FC<SchoolManagerProps> = ({ schools, setSchools }) =>
                   <i className="fas fa-school text-xl"></i>
                 </div>
                 <span className="bg-slate-800 text-slate-400 text-xs px-2 py-1 rounded-full">
-                  {school.classes.length} Turmas
+                  {school.classes?.length || 0} Turmas
                 </span>
               </div>
               <h3 className="text-xl font-bold text-slate-200">{school.name}</h3>
               <p className="text-sm text-slate-500 mt-2">
-                {school.classes.reduce((acc, c) => acc + c.students.length, 0)} Alunos totais
+                {school.classes?.reduce((acc, c) => acc + (c.students?.length || 0), 0) || 0} Alunos totais
               </p>
             </div>
           ))}
@@ -167,13 +173,13 @@ const SchoolManager: React.FC<SchoolManagerProps> = ({ schools, setSchools }) =>
         </div>
        
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {selectedSchool.classes.map(cls => (
+            {selectedSchool.classes?.map(cls => (
                 <div key={cls.id} onClick={() => setSelectedClassId(cls.id)} className="bg-slate-900 border border-slate-800 p-4 rounded-xl hover:border-indigo-500 cursor-pointer transition-all">
                     <div className="flex justify-between items-center mb-2">
                         <h4 className="font-bold text-lg">{cls.name}</h4>
                         <i className="fas fa-chevron-right text-slate-600"></i>
                     </div>
-                    <p className="text-sm text-slate-400">{cls.students.length} Alunos</p>
+                    <p className="text-sm text-slate-400">{cls.students?.length || 0} Alunos</p>
                 </div>
             ))}
         </div>
@@ -215,18 +221,18 @@ const SchoolManager: React.FC<SchoolManagerProps> = ({ schools, setSchools }) =>
                         <tr className="text-slate-500 text-xs border-b border-slate-800 uppercase">
                             <th className="pb-3 pl-4">Nome do Aluno</th>
                             <th className="pb-3">Carteira (Public Key)</th>
-                            <th className="pb-3 text-right">Saldo</th>
+                            <th className="pb-3 text-right">Saldo (1º Bim)</th>
                             <th className="pb-3 pr-4 text-center">Status</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/50 text-sm">
-                        {selectedClass.students.length === 0 ? (
+                        {(selectedClass.students || []).length === 0 ? (
                             <tr>
                                 <td colSpan={4} className="py-8 text-center text-slate-500 italic">
                                     Nenhum aluno nesta turma. Importe um CSV ou adicione manualmente.
                                 </td>
                             </tr>
-                        ) : selectedClass.students.map(student => (
+                        ) : selectedClass.students?.map(student => (
                             <tr key={student.id} className="hover:bg-slate-800/30">
                                 <td className="py-3 pl-4 font-medium text-slate-200">{student.name}</td>
                                 <td className="py-3">
@@ -241,7 +247,7 @@ const SchoolManager: React.FC<SchoolManagerProps> = ({ schools, setSchools }) =>
                                         </button>
                                     )}
                                 </td>
-                                <td className="py-3 text-right font-mono text-emerald-400">{student.balance} LC</td>
+                                <td className="py-3 text-right font-mono text-emerald-400">{student.lxcTotal[1] || 0} LXC</td>
                                 <td className="py-3 pr-4 text-center">
                                     <span className={`w-2 h-2 rounded-full inline-block ${student.walletAddress ? 'bg-emerald-500' : 'bg-slate-600'}`}></span>
                                 </td>

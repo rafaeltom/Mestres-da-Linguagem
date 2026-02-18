@@ -39,7 +39,6 @@ export const parseStudentsCSV = (content: string): Partial<Student>[] => {
       if (columns.length >= 1) {
         students.push({
           name: columns[0].trim(),
-          balance: 0
         });
       }
     }
