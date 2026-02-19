@@ -5,13 +5,13 @@ import { getFirestore, Firestore } from "firebase/firestore";
 
 // Configuração do Firebase fornecida pelo console
 const firebaseConfig = {
-  apiKey: "AIzaSyAMvNZpvfmne063VHsM8QxhBwApfegTUb0",
-  authDomain: "amigo-do-professor.firebaseapp.com",
-  projectId: "amigo-do-professor",
-  storageBucket: "amigo-do-professor.firebasestorage.app",
-  messagingSenderId: "218248723844",
-  appId: "1:218248723844:web:67890a31d0e0718aebf1d1",
-  measurementId: "G-1QRKBNDH71"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
 };
 
 // Inicializa o Firebase App
