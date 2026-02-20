@@ -1,5 +1,5 @@
 
-import { School, Student, Transaction, TaskDefinition, Badge, TeacherProfileData } from '../types';
+import { School, Student, Transaction, TaskDefinition, Badge, TeacherProfileData, PenaltyDefinition } from '../types';
 
 const DB_KEY = 'mestres_linguagem_v2';
 const PROFILE_KEY = 'mestres_teacher_profile';
@@ -13,6 +13,7 @@ export interface AppData {
   transactions: Transaction[];
   taskCatalog: TaskDefinition[];
   badgesCatalog: Badge[];
+  penaltiesCatalog: PenaltyDefinition[];
 }
 
 // Dados iniciais com Badges pré-configuradas
@@ -30,6 +31,11 @@ const INITIAL_DATA: AppData = {
     { id: 'b3', name: 'Artista', icon: 'fa-palette', description: 'Criatividade visual destacada', bimesters: [1, 2, 3, 4] },
     { id: 'b4', name: 'Líder', icon: 'fa-crown', description: 'Organizou grupos e ajudou o professor', bimesters: [1, 2, 3, 4] },
     { id: 'b5', name: 'Pontual', icon: 'fa-clock', description: 'Nunca chegou atrasado', bimesters: [1, 2, 3, 4] }
+  ],
+  penaltiesCatalog: [
+    { id: 'p1', title: 'Desrespeito', description: 'Faltou com respeito aos colegas ou professor', defaultPoints: -30, bimesters: [1, 2, 3, 4] },
+    { id: 'p2', title: 'Pouca Colaboração', description: 'Não participou das atividades em grupo', defaultPoints: -10, bimesters: [1, 2, 3, 4] },
+    { id: 'p3', title: 'Plágio', description: 'Copiou trabalho de colega ou da internet', defaultPoints: -5, bimesters: [1, 2, 3, 4] }
   ]
 };
 
@@ -39,9 +45,9 @@ export const loadData = (): AppData => {
   try {
     const stored = localStorage.getItem(DB_KEY);
     if (!stored) return INITIAL_DATA;
-    
+
     const parsed = JSON.parse(stored);
-    
+
     // Fix datas
     if (parsed.transactions) {
       parsed.transactions = parsed.transactions.map((t: any) => ({
@@ -49,23 +55,29 @@ export const loadData = (): AppData => {
         date: new Date(t.date)
       }));
     }
-    
+
     // Merge com initial e garante compatibilidade de tipos para bimesters
     const tasks = (parsed.taskCatalog || INITIAL_DATA.taskCatalog).map((t: any) => ({
-        ...t,
-        bimesters: t.bimesters || [1, 2, 3, 4]
+      ...t,
+      bimesters: t.bimesters || [1, 2, 3, 4]
     }));
 
     const badges = (parsed.badgesCatalog || INITIAL_DATA.badgesCatalog).map((b: any) => ({
-        ...b,
-        bimesters: b.bimesters || [1, 2, 3, 4]
+      ...b,
+      bimesters: b.bimesters || [1, 2, 3, 4]
+    }));
+
+    const penalties = (parsed.penaltiesCatalog || INITIAL_DATA.penaltiesCatalog).map((p: any) => ({
+      ...p,
+      bimesters: p.bimesters || [1, 2, 3, 4]
     }));
 
     return {
-        ...INITIAL_DATA,
-        ...parsed,
-        taskCatalog: tasks,
-        badgesCatalog: badges
+      ...INITIAL_DATA,
+      ...parsed,
+      taskCatalog: tasks,
+      badgesCatalog: badges,
+      penaltiesCatalog: penalties
     };
   } catch (e) {
     console.error("Erro ao carregar dados locais", e);
@@ -84,55 +96,55 @@ export const saveData = (data: AppData) => {
 // --- PROFILE MANAGEMENT ---
 
 export const loadProfile = (): TeacherProfileData => {
-    const stored = localStorage.getItem(PROFILE_KEY);
-    if (stored) {
-        // Migração simples se o hash antigo (ou resetado) estiver salvo
-        const profile = JSON.parse(stored);
-        if (profile.passwordHash === "DEFAULT_RESET" || profile.passwordHash.length > 30) {
-             profile.passwordHash = DEFAULT_PASS_HASH;
-        }
-        return profile;
+  const stored = localStorage.getItem(PROFILE_KEY);
+  if (stored) {
+    // Migração simples se o hash antigo (ou resetado) estiver salvo
+    const profile = JSON.parse(stored);
+    if (profile.passwordHash === "DEFAULT_RESET" || profile.passwordHash.length > 30) {
+      profile.passwordHash = DEFAULT_PASS_HASH;
     }
-    return {
-        name: "Professor(a)",
-        subject: "Linguagens",
-        bio: "Educador focado em gamificação.",
-        passwordHash: DEFAULT_PASS_HASH
-    };
+    return profile;
+  }
+  return {
+    name: "Professor(a)",
+    subject: "Linguagens",
+    bio: "Educador focado em gamificação.",
+    passwordHash: DEFAULT_PASS_HASH
+  };
 };
 
 export const saveProfile = (profile: TeacherProfileData) => {
-    localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+  localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
 };
 
 // --- DATA BACKUP TOOLS ---
 
 export const exportDataToJSON = () => {
-    const data = loadData();
-    const jsonString = JSON.stringify(data, null, 2);
-    const blob = new Blob([jsonString], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `mestres_backup_${new Date().toISOString().slice(0,10)}.json`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const data = loadData();
+  const jsonString = JSON.stringify(data, null, 2);
+  const blob = new Blob([jsonString], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `mestres_backup_${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 };
 
 export const importDataFromJSON = (jsonContent: string): boolean => {
-    try {
-        const parsed = JSON.parse(jsonContent);
-        // Validação básica
-        if(!parsed.schools) throw new Error("Arquivo inválido");
-        
-        saveData(parsed);
-        return true;
-    } catch(e) {
-        console.error(e);
-        return false;
-    }
+  try {
+    const parsed = JSON.parse(jsonContent);
+    // Validação básica
+    if (!parsed.schools) throw new Error("Arquivo inválido");
+
+    saveData(parsed);
+    return true;
+  } catch (e) {
+    console.error(e);
+    return false;
+  }
 };
 
 // --- HELPERS ---
@@ -143,7 +155,7 @@ export const getAllStudents = (schools: School[]): Student[] => {
 
 export const addTransaction = (currentData: AppData, tx: Transaction): AppData => {
   const newData = { ...currentData, transactions: [tx, ...currentData.transactions] };
-  
+
   // Atualiza saldo do aluno
   const schools = newData.schools.map(school => ({
     ...school,
@@ -152,12 +164,12 @@ export const addTransaction = (currentData: AppData, tx: Transaction): AppData =
       students: cls.students?.map(std => {
         if (std.id === tx.studentId) {
           const currentBalance = std.lxcTotal[tx.bimester] || 0;
-          
+
           let updatedBadges = std.badges || [];
           if (tx.type === 'BADGE') {
-             if(!updatedBadges.includes(tx.description)) {
-                 updatedBadges = [...updatedBadges, tx.description];
-             }
+            if (!updatedBadges.includes(tx.description)) {
+              updatedBadges = [...updatedBadges, tx.description];
+            }
           }
 
           return {
@@ -178,71 +190,71 @@ export const addTransaction = (currentData: AppData, tx: Transaction): AppData =
 };
 
 export const removeTransaction = (currentData: AppData, transactionId: string): AppData => {
-    const txToRemove = currentData.transactions.find(t => t.id === transactionId);
-    if (!txToRemove) return currentData;
+  const txToRemove = currentData.transactions.find(t => t.id === transactionId);
+  if (!txToRemove) return currentData;
 
-    const newTransactions = currentData.transactions.filter(t => t.id !== transactionId);
+  const newTransactions = currentData.transactions.filter(t => t.id !== transactionId);
 
-    const schools = currentData.schools.map(school => ({
-        ...school,
-        classes: school.classes?.map(cls => ({
-            ...cls,
-            students: cls.students?.map(std => {
-                if (std.id === txToRemove.studentId) {
-                    const currentBalance = std.lxcTotal[txToRemove.bimester] || 0;
-                    
-                    let updatedBadges = std.badges || [];
-                    if (txToRemove.type === 'BADGE') {
-                        updatedBadges = updatedBadges.filter(bId => bId !== txToRemove.description);
-                    }
+  const schools = currentData.schools.map(school => ({
+    ...school,
+    classes: school.classes?.map(cls => ({
+      ...cls,
+      students: cls.students?.map(std => {
+        if (std.id === txToRemove.studentId) {
+          const currentBalance = std.lxcTotal[txToRemove.bimester] || 0;
 
-                    return {
-                        ...std,
-                        lxcTotal: {
-                            ...std.lxcTotal,
-                            [txToRemove.bimester]: currentBalance - txToRemove.amount
-                        },
-                        badges: updatedBadges
-                    };
-                }
-                return std;
-            }) || []
-        })) || []
-    }));
+          let updatedBadges = std.badges || [];
+          if (txToRemove.type === 'BADGE') {
+            updatedBadges = updatedBadges.filter(bId => bId !== txToRemove.description);
+          }
 
-    return { ...currentData, transactions: newTransactions, schools };
+          return {
+            ...std,
+            lxcTotal: {
+              ...std.lxcTotal,
+              [txToRemove.bimester]: currentBalance - txToRemove.amount
+            },
+            badges: updatedBadges
+          };
+        }
+        return std;
+      }) || []
+    })) || []
+  }));
+
+  return { ...currentData, transactions: newTransactions, schools };
 };
 
 export const updateTransactionAmount = (currentData: AppData, transactionId: string, newAmount: number): AppData => {
-    const txIndex = currentData.transactions.findIndex(t => t.id === transactionId);
-    if (txIndex === -1) return currentData;
+  const txIndex = currentData.transactions.findIndex(t => t.id === transactionId);
+  if (txIndex === -1) return currentData;
 
-    const originalTx = currentData.transactions[txIndex];
-    const diff = newAmount - originalTx.amount;
+  const originalTx = currentData.transactions[txIndex];
+  const diff = newAmount - originalTx.amount;
 
-    const updatedTx = { ...originalTx, amount: newAmount };
-    const newTransactions = [...currentData.transactions];
-    newTransactions[txIndex] = updatedTx;
+  const updatedTx = { ...originalTx, amount: newAmount };
+  const newTransactions = [...currentData.transactions];
+  newTransactions[txIndex] = updatedTx;
 
-    const schools = currentData.schools.map(school => ({
-        ...school,
-        classes: school.classes?.map(cls => ({
-            ...cls,
-            students: cls.students?.map(std => {
-                if (std.id === originalTx.studentId) {
-                    const currentBalance = std.lxcTotal[originalTx.bimester] || 0;
-                    return {
-                        ...std,
-                        lxcTotal: {
-                            ...std.lxcTotal,
-                            [originalTx.bimester]: currentBalance + diff
-                        }
-                    };
-                }
-                return std;
-            }) || []
-        })) || []
-    }));
+  const schools = currentData.schools.map(school => ({
+    ...school,
+    classes: school.classes?.map(cls => ({
+      ...cls,
+      students: cls.students?.map(std => {
+        if (std.id === originalTx.studentId) {
+          const currentBalance = std.lxcTotal[originalTx.bimester] || 0;
+          return {
+            ...std,
+            lxcTotal: {
+              ...std.lxcTotal,
+              [originalTx.bimester]: currentBalance + diff
+            }
+          };
+        }
+        return std;
+      }) || []
+    })) || []
+  }));
 
-    return { ...currentData, transactions: newTransactions, schools };
+  return { ...currentData, transactions: newTransactions, schools };
 };

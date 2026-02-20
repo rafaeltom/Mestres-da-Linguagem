@@ -2,6 +2,7 @@
 import { initializeApp } from "firebase/app";
 import { getAnalytics } from "firebase/analytics";
 import { getFirestore, Firestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 
 // Configuração do Firebase fornecida pelo console
 const firebaseConfig = {
@@ -31,4 +32,7 @@ if (typeof window !== 'undefined') {
 // A inicialização direta aqui é segura agora que o importmap foi corrigido.
 const db = getFirestore(app);
 
-export { app, analytics, db };
+// Inicializa a Autenticação
+const auth = getAuth(app);
+
+export { app, analytics, db, auth };

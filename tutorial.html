@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mestres da Linguagem Phase 2 (Beta 0.5) - Documentação & Especificação</title>
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --primary-dark: #4338ca;
+            --text: #1e293b;
+            --bg: #f8fafc;
+            --highlight: #fef3c7;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            color: var(--text);
+            background: var(--bg);
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        h1,
+        h2,
+        h3 {
+            color: var(--text);
+            margin-top: 2rem;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            border-bottom: 4px solid var(--primary);
+            padding-bottom: 0.5rem;
+        }
+
+        h2 {
+            font-size: 1.8rem;
+            color: var(--primary-dark);
+            border-left: 5px solid var(--primary);
+            padding-left: 1rem;
+        }
+
+        code {
+            background: #e2e8f0;
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+
+        pre {
+            background: #1e293b;
+            color: #fff;
+            padding: 1.5rem;
+            border-radius: 8px;
+            overflow-x: auto;
+        }
+
+        .badge {
+            background: var(--primary);
+            color: white;
+            padding: 0.2rem 0.6rem;
+            border-radius: 99px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin: 2rem 0;
+        }
+
+        .card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        ul {
+            list-style-type: disc;
+            padding-left: 1.5rem;
+        }
+
+        li {
+            margin-bottom: 0.5rem;
+        }
+
+        .warning {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 1rem;
+            border-radius: 8px;
+            border-left: 5px solid #ef4444;
+            margin: 1rem 0;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Mestres da Linguagem <span class="badge">Beta 0.5</span></h1>
+    <p><strong>Status:</strong> Em Desenvolvimento (Fase de Integração Firestore)<br>
+        <strong>Versão:</strong> 0.5.0<br>
+        <strong>Data:</strong> Fevereiro 2026
+    </p>
+
+    <div class="warning">
+        <strong>Atenção:</strong> Este documento serve como especificação técnica para a migração do `localStorage` para
+        o Firebase Firestore.
+    </div>
+
+    <h2>1. Visão Geral</h2>
+    <p>O <em>Mestres da Linguagem</em> é uma plataforma de gamificação para gestão de sala de aula. Professores
+        gerenciam escolas, turmas e alunos, atribuindo pontos (Lexicoins - LXC) por tarefas e medalhas por conquistas. A
+        versão Beta 0.5 foca na estabilidade da UI, melhorias na gestão de alunos e persistência de dados em nuvem.</p>
+
+    <h2>2. Novas Funcionalidades (Beta 0.5)</h2>
+    <div class="grid">
+        <div class="card">
+            <h3>Gestão Visual de Alunos</h3>
+            <p>Possibilidade de "marcar" alunos com etiquetas coloridas (ex: monitor, dificuldade, atenção) e apelidos
+                (nicknames) para privacidade/gamificação.</p>
+        </div>
+        <div class="card">
+            <h3>Seletor de Missões Renovado</h3>
+            <p>Novo modal com abas para Missões e Penalidades, busca em tempo real e criação rápida de itens
+                personalizados.</p>
+        </div>
+        <div class="card">
+            <h3>Timeline Detalhada</h3>
+            <p>Visualização clara do histórico de transações do aluno, com diferenciação visual entre ganhos (verde) e
+                perdas/penalidades (vermelho/Timeline).</p>
+        </div>
+        <div class="card">
+            <h3>Catálogo de Penalidades</h3>
+            <p>Suporte oficial para penalidades com descrições e valores negativos padrão, integradas ao fluxo de
+                "Consequências".</p>
+        </div>
+    </div>
+
+    <h2>3. Estrutura de Dados (Especificação Firestore)</h2>
+    <p>Abaixo a estrutura JSON planejada para o Firestore. Cada entidade raiz mapeia para uma Coleção.</p>
+
+    <h3>Coleção: <code>users</code> (Professores)</h3>
+    <pre>
+{
+  "uid": "FIREBASE_AUTH_UID",
+  "email": "professor@exemplo.com",
+  "name": "Nome do Professor",
+  "subject": "Português",
+  "bio": "Texto de apresentação",
+  "schoolIds": ["SCHOOL_ID_1", "SCHOOL_ID_2"], // Escolas que o user tem acesso
+  "createdAt": "TIMESTAMP"
+}
+    </pre>
+
+    <h3>Coleção: <code>Schools</code></h3>
+    <pre>
+{
+  "id": "UUID",
+  "ownerId": "FIREBASE_AUTH_UID", // Link com o professor
+  "name": "Escola Estadual Exemplo",
+  "createdAt": "TIMESTAMP"
+}
+    </pre>
+
+    <h3>Coleção: <code>Classes</code></h3>
+    <pre>
+{
+  "id": "UUID",
+  "schoolId": "SCHOOL_ID",
+  "name": "1º Ano A",
+  "ownerId": "FIREBASE_AUTH_UID"
+}
+    </pre>
+
+    <h3>Coleção: <code>Students</code></h3>
+    <pre>
+{
+  "id": "UUID",
+  "classId": "CLASS_ID",
+  "name": "Nome Completo",
+  "nickname": "Mestre Jedi",
+  "registrationId": "123456", // Matrícula (Opcional)
+  "avatarId": "default",
+  "marked": true, // Se está marcado
+  "markedColor": "#F59E0B",
+  "markedLabel": "Monitor",
+  "lxcTotal": { // Saldo de Cache (calculado via Cloud Functions ou Client-side agg)
+    "1": 150,
+    "2": 0,
+    "3": 0,
+    "4": 0
+  },
+  "badges": ["BADGE_ID_1", "BADGE_ID_2"],
+  "ownerId": "FIREBASE_AUTH_UID"
+}
+    </pre>
+
+    <h3>Coleção: <code>Transactions</code> (Log de Eventos)</h3>
+    <pre>
+{
+  "id": "UUID",
+  "studentId": "STUDENT_ID",
+  "classId": "CLASS_ID", // Para consultas rápidas por turma
+  "type": "TASK" | "PENALTY" | "BADGE" | "BONUS",
+  "amount": 10, // Positivo ou Negativo
+  "description": "Tarefa de Casa",
+  "bimester": 1,
+  "date": "TIMESTAMP",
+  "ownerId": "FIREBASE_AUTH_UID"
+}
+    </pre>
+
+    <h3>Coleção: <code>Catalog</code> (Missões, Medalhas, Penalidades)</h3>
+    <p>Pode ser subdividido ou usar um campo <code>type</code>.</p>
+    <pre>
+{
+  "id": "UUID",
+  "ownerId": "FIREBASE_AUTH_UID",
+  "type": "TASK" | "BADGE" | "PENALTY",
+  "title": "Leitura em Voz Alta",
+  "description": "Ler um parágrafo...",
+  "defaultPoints": 20,
+  "icon": "fa-book",
+  "bimesters": [1, 2, 3, 4]
+}
+    </pre>
+
+    <h2>4. Regras de Negócio & Segurança</h2>
+    <ul>
+        <li><strong>Autenticação:</strong> Login via Google Preferencial. Login/Senha mantido por legado.</li>
+        <li><strong>Isolamento:</strong> Um professor só pode ler/escrever dados onde `ownerId` == `auth.uid`.</li>
+        <li><strong>Off-line First:</strong> O app deve carregar dados básicos mesmo com conexão intermitente (usando
+            cache do Firestore SDK).</li>
+        <li><strong>Migração:</strong> Ao fazer login, o sistema deve verificar se há dados no `localStorage`. Se houver
+            e o Firestore estiver vazio, oferecer importação.</li>
+    </ul>
+
+    <h2>5. Próximos Passos</h2>
+    <ol>
+        <li>Implementar `firestoreService.ts` completo com CRUDs.</li>
+        <li>Criar hook de sincronização `useFirestoreSync`.</li>
+        <li>Migrar estado local do React (`data` state) para ouvir snapshots do Firestore em tempo real.</li>
+        <li>Testar fluxo de múltiplos dispositivos.</li>
+    </ol>
+
+</body>
+
+</html>

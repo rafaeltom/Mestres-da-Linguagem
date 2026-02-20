@@ -221,14 +221,15 @@ export const TURMAS_2026: AppData = {
   ],
   "transactions": [],
   "taskCatalog": [
-    { "id": "t1", "title": "Lição de Casa Completa", "description": "Entregou no prazo e completa", "defaultPoints": 20, "bimesters": [1,2,3,4] },
-    { "id": "t2", "title": "Participação em Aula", "description": "Respondeu perguntas ou foi ao quadro", "defaultPoints": 10, "bimesters": [1,2,3,4] },
-    { "id": "t3", "title": "Comportamento Exemplar", "description": "Ajudou colegas ou manteve a ordem", "defaultPoints": 15, "bimesters": [1,2,3,4] }
+    { "id": "t1", "title": "Lição de Casa Completa", "description": "Entregou no prazo e completa", "defaultPoints": 20, "bimesters": [1, 2, 3, 4] },
+    { "id": "t2", "title": "Participação em Aula", "description": "Respondeu perguntas ou foi ao quadro", "defaultPoints": 10, "bimesters": [1, 2, 3, 4] },
+    { "id": "t3", "title": "Comportamento Exemplar", "description": "Ajudou colegas ou manteve a ordem", "defaultPoints": 15, "bimesters": [1, 2, 3, 4] }
   ],
   "badgesCatalog": [
-    { "id": "b1", "name": "Leitor Voraz", "icon": "fa-book-reader", "description": "Leu mais de 3 livros no bimestre", "bimesters": [1,2,3,4] },
-    { "id": "b3", "name": "Artista", "icon": "fa-palette", "description": "Criatividade visual destacada", "bimesters": [1,2,3,4] },
-    { "id": "b4", "name": "Líder", "icon": "fa-crown", "description": "Organizou grupos e ajudou o professor", "bimesters": [1,2,3,4] },
-    { "id": "b5", "name": "Pontual", "icon": "fa-clock", "description": "Nunca chegou atrasado", "bimesters": [1,2,3,4] }
-  ]
+    { "id": "b1", "name": "Leitor Voraz", "icon": "fa-book-reader", "description": "Leu mais de 3 livros no bimestre", "bimesters": [1, 2, 3, 4] },
+    { "id": "b3", "name": "Artista", "icon": "fa-palette", "description": "Criatividade visual destacada", "bimesters": [1, 2, 3, 4] },
+    { "id": "b4", "name": "Líder", "icon": "fa-crown", "description": "Organizou grupos e ajudou o professor", "bimesters": [1, 2, 3, 4] },
+    { "id": "b5", "name": "Pontual", "icon": "fa-clock", "description": "Nunca chegou atrasado", "bimesters": [1, 2, 3, 4] }
+  ],
+  "penaltiesCatalog": []
 };

@@ -21,18 +21,24 @@ export interface Student {
   nickname?: string; // Novo: Apelido escolhido pelo aluno
   classId: string;
   schoolId: string;
-  avatarId: string; 
-  lxcTotal: { [key in Bimester]: number }; 
+  avatarId: string;
+  lxcTotal: { [key in Bimester]: number };
   badges: string[]; // IDs das medalhas
   walletAddress?: string;
   encryptedPrivateKey?: string;
   messages?: string[];
+  marked?: boolean;
+  markedColor?: string;
+  markedLabel?: string;
+  registrationId?: string;
 }
 
 export interface ClassGroup {
   id: string;
-  name: string; 
+  name: string;
   schoolId: string;
+  seed?: string; // Código único de compartilhamento
+  sharedWith?: string[]; // UIDs de outros professores que têm acesso
   students?: Student[];
 }
 
@@ -55,6 +61,15 @@ export interface Transaction {
 }
 
 // Novo: Definição de Tarefa Padrão (O "Cardápio")
+// Novo: Definição de Penalidade Padrão
+export interface PenaltyDefinition {
+  id: string;
+  title: string;
+  description: string;
+  defaultPoints: number; // Valor negativo
+  bimesters: Bimester[];
+}
+
 export interface TaskDefinition {
   id: string;
   title: string;
