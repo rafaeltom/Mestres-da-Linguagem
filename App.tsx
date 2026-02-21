@@ -106,20 +106,22 @@ const Input = ({ label, ...props }: any) => (
 
 // --- MODAIS GERAIS ---
 
-const GenericModal = ({ title, onClose, onSave, children, saveLabel = "Salvar", saveVariant = "primary" }: any) => (
+const GenericModal = ({ title, onClose, onSave, children, saveLabel = "Salvar", saveVariant = "primary", showFooter = true }: any) => (
     <div className="fixed inset-0 bg-slate-900/60 flex items-end md:items-center justify-center z-50 backdrop-blur-sm p-0 md:p-4 animate-fade-in" onClick={(e) => e.stopPropagation()}>
         <div className="bg-white rounded-t-2xl md:rounded-2xl p-6 w-full md:max-w-md shadow-2xl transform transition-all scale-100 max-h-[90vh] overflow-y-auto flex flex-col">
             <div className="flex justify-between items-center mb-6 flex-shrink-0">
                 <h3 className="text-xl font-bold text-slate-800">{title}</h3>
                 <button onClick={onClose} className="w-8 h-8 flex items-center justify-center bg-slate-100 rounded-full text-slate-400 hover:text-red-500 transition-colors"><i className="fas fa-times text-lg"></i></button>
             </div>
-            <div className="mb-6 space-y-4 overflow-y-auto custom-scrollbar">
+            <div className={`space-y-4 overflow-y-auto custom-scrollbar ${showFooter ? 'mb-6' : ''}`}>
                 {children}
             </div>
-            <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 flex-shrink-0">
-                <Button variant="secondary" onClick={onClose} className="flex-1 md:flex-none">Cancelar</Button>
-                <Button onClick={onSave} variant={saveVariant} className="flex-1 md:flex-none">{saveLabel}</Button>
-            </div>
+            {(showFooter && onSave) && (
+                <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 flex-shrink-0">
+                    <Button variant="secondary" onClick={onClose} className="flex-1 md:flex-none">Cancelar</Button>
+                    <Button onClick={onSave} variant={saveVariant} className="flex-1 md:flex-none">{saveLabel}</Button>
+                </div>
+            )}
         </div>
     </div>
 );
@@ -355,6 +357,46 @@ export default function App() {
     const [pinModalConfig, setPinModalConfig] = useState<{ isOpen: boolean, targetView: 'schools' | 'profile' | null }>({ isOpen: false, targetView: null });
     const [pinInput, setPinInput] = useState('');
     const [pinError, setPinError] = useState('');
+    const [failedAttempts, setFailedAttempts] = useState(0);
+    const [lockoutTime, setLockoutTime] = useState(0);
+
+    // Lockout Timer Logic
+    useEffect(() => {
+        let timer: any;
+        if (lockoutTime > 0) {
+            timer = setInterval(() => {
+                setLockoutTime(prev => Math.max(0, prev - 1));
+            }, 1000);
+        }
+        return () => clearInterval(timer);
+    }, [lockoutTime]);
+
+    // Auto-verify PIN
+    useEffect(() => {
+        if (pinInput.length === 4 && lockoutTime === 0) {
+            const expectedPin = profile.pin || "0000";
+            if (pinInput === expectedPin) {
+                setIsSchoolTabUnlocked(true);
+                setFailedAttempts(0);
+                setPinModalConfig({ isOpen: false, targetView: null });
+                if (pinModalConfig.targetView) setView(pinModalConfig.targetView);
+                setPinInput('');
+                setPinError('');
+            } else {
+                const newAttempts = failedAttempts + 1;
+                setFailedAttempts(newAttempts);
+                setPinInput('');
+
+                if (newAttempts > 3) {
+                    const extraTime = (newAttempts - 4) * 5;
+                    setLockoutTime(30 + extraTime);
+                    setPinError(`Muitas tentativas. Aguarde 30s (+${extraTime}s).`);
+                } else {
+                    setPinError(`PIN Incorreto. (${newAttempts}/3 tentativas antes do bloqueio)`);
+                }
+            }
+        }
+    }, [pinInput, profile.pin, lockoutTime, failedAttempts, pinModalConfig.targetView]);
 
     // Contexto de Seleção
     const [selectedSchoolId, setSelectedSchoolId] = useState<string>('');
@@ -1407,21 +1449,14 @@ export default function App() {
                 setPinError('');
                 return;
             }
+        } else {
+            // Ao navegar para áreas públicas, tranca novamente as áreas sensíveis
+            setIsSchoolTabUnlocked(false);
         }
         setView(targetView);
     };
 
-    const handlePinSubmit = () => {
-        const expectedPin = profile.pin || "0000";
-        if (pinInput === expectedPin) {
-            setIsSchoolTabUnlocked(true);
-            setPinModalConfig({ isOpen: false, targetView: null });
-            if (pinModalConfig.targetView) setView(pinModalConfig.targetView);
-        } else {
-            setPinError("PIN Incorreto. Tente novamente.");
-            setPinInput('');
-        }
-    };
+    // handlePinSubmit removed, now handled by useEffect auto-verify
 
     // --- DERIVED STATE ---
     const currentSchool = data.schools.find(s => s.id === selectedSchoolId);
@@ -2924,44 +2959,7 @@ export default function App() {
                 </div>
             )}
 
-            {/* --- PIN MODAL --- */}
-            {pinModalConfig.isOpen && (
-                <GenericModal
-                    title="Acesso Protegido"
-                    onClose={() => setPinModalConfig({ isOpen: false, targetView: null })}
-                    onSave={handlePinSubmit}
-                    saveLabel="Verificar"
-                >
-                    <div className="text-center py-4">
-                        <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4 text-amber-500 text-2xl">
-                            <i className="fas fa-lock"></i>
-                        </div>
-                        <p className="text-slate-600 font-medium mb-6">Insira seu PIN de 4 dígitos para acessar esta área.</p>
 
-                        <div className="max-w-[150px] mx-auto">
-                            <input
-                                autoFocus
-                                type="password"
-                                maxLength={4}
-                                value={pinInput}
-                                onChange={e => {
-                                    setPinInput(e.target.value);
-                                    setPinError('');
-                                }}
-                                onKeyDown={e => { if (e.key === 'Enter') handlePinSubmit(); }}
-                                className="w-full text-center tracking-[1em] font-bold text-2xl bg-slate-50 border-2 border-slate-300 rounded-xl p-3 outline-none focus:border-amber-500"
-                                placeholder="••••"
-                            />
-                        </div>
-                        {pinError && <p className="text-red-500 text-xs font-bold mt-3 animate-fade-in">{pinError}</p>}
-                        {(!profile.pin || profile.pin === "0000") && (
-                            <p className="text-[10px] text-slate-400 mt-4 italic text-center opacity-70">
-                                Dica: O PIN provisório de acesso é 0000.
-                            </p>
-                        )}
-                    </div>
-                </GenericModal>
-            )}
 
             {
                 studentSettingsConfig.isOpen && (
@@ -3257,46 +3255,53 @@ export default function App() {
                         setPinInput('');
                         setPinError('');
                     }}
-                    onSave={() => {
-                        // In Beta 0.9, Teacher Profile configures PIN. Not implemented yet, default is always '0000'.
-                        const correctPin = profile.pin || '0000';
-                        if (pinInput === correctPin) {
-                            setIsSchoolTabUnlocked(true);
-                            if (pinModalConfig.targetView) setView(pinModalConfig.targetView);
-                            setPinModalConfig({ isOpen: false, targetView: null });
-                            setPinInput('');
-                            setPinError('');
-                        } else {
-                            setPinError('PIN Incorreto.');
-                            setPinInput('');
-                        }
-                    }}
-                    saveLabel="Desbloquear"
-                    saveVariant="primary"
+                    showFooter={false}
                 >
                     <div className="text-center py-4">
-                        <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4 text-amber-500 text-2xl">
-                            <i className="fas fa-lock"></i>
+                        <div className={`w-16 h-16 ${lockoutTime > 0 ? 'bg-red-100 text-red-500' : 'bg-amber-100 text-amber-500'} rounded-full flex items-center justify-center mx-auto mb-4 text-2xl animate-pulse`}>
+                            <i className={`fas ${lockoutTime > 0 ? 'fa-hourglass-half' : 'fa-lock'}`}></i>
                         </div>
-                        <p className="text-sm text-slate-500 mb-6">Esta área contém configurações sensíveis. Digite seu PIN numérico para continuar.</p>
+                        <h4 className="font-bold text-slate-700 mb-2">Digite o PIN do Professor</h4>
+                        <p className="text-xs text-slate-500 mb-6 px-4">Esta área contém configurações sensíveis e requer autorização.</p>
 
-                        <div className="flex flex-col items-center gap-2 max-w-xs mx-auto">
-                            <input
-                                type="password"
-                                className="w-full text-center tracking-[1em] font-bold text-2xl py-3 border-2 border-slate-200 rounded-xl outline-none focus:border-indigo-500"
-                                maxLength={4}
-                                value={pinInput}
-                                onChange={e => {
-                                    const val = e.target.value.replace(/\D/g, '');
-                                    setPinInput(val);
-                                    setPinError('');
-                                }}
-                                autoFocus
-                                placeholder="••••"
-                            />
-                            {pinError && <p className="text-xs font-bold text-red-500 mt-2">{pinError}</p>}
-                            {(!profile.pin || profile.pin === '0000') && (
-                                <p className="text-[10px] text-slate-400 mt-2 italic">Dica: O PIN padrão provisório é 0000. Altere no perfil.</p>
+                        <div className="flex flex-col items-center gap-4 max-w-xs mx-auto">
+                            <div className="relative w-full">
+                                <input
+                                    type="password"
+                                    className={`w-full text-center tracking-[1em] font-bold text-3xl py-4 border-2 rounded-2xl outline-none transition-all ${lockoutTime > 0 ? 'bg-slate-50 border-slate-200 cursor-not-allowed opacity-50' : 'bg-white border-slate-200 focus:border-indigo-500'}`}
+                                    maxLength={4}
+                                    value={pinInput}
+                                    onChange={e => {
+                                        if (lockoutTime > 0) return;
+                                        const val = e.target.value.replace(/\D/g, '');
+                                        setPinInput(val);
+                                        setPinError('');
+                                    }}
+                                    disabled={lockoutTime > 0}
+                                    autoFocus
+                                    placeholder="••••"
+                                />
+                                {lockoutTime > 0 && (
+                                    <div className="absolute inset-0 flex items-center justify-center bg-white/10 backdrop-blur-[1px] rounded-2xl">
+                                        <span className="bg-red-500 text-white px-3 py-1 rounded-full text-xs font-black animate-bounce shadow-lg">
+                                            Aguarde {lockoutTime}s
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+
+                            {pinError && (
+                                <p className={`text-xs font-bold p-2 rounded-lg w-full ${lockoutTime > 0 ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-500'}`}>
+                                    <i className="fas fa-info-circle mr-1"></i>
+                                    {pinError}
+                                </p>
+                            )}
+
+                            {(!profile.pin || profile.pin === '0000') && lockoutTime === 0 && (
+                                <p className="text-[10px] text-slate-400 mt-2 italic px-2">
+                                    <i className="fas fa-lightbulb text-amber-400 mr-1"></i>
+                                    Dica: O PIN padrão é 0000. Altere no perfil.
+                                </p>
                             )}
                         </div>
                     </div>
