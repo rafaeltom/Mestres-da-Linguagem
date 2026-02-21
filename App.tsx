@@ -370,7 +370,10 @@ export default function App() {
         icon: 'fa-medal',
         imageUrl: '',
         rewardValue: 0,
-        bimesters: [1, 2, 3, 4] as Bimester[]
+        bimesters: [1, 2, 3, 4] as Bimester[],
+        autoUnlockEnabled: false,
+        autoUnlockType: 'LXC' as 'LXC' | 'TASKS',
+        autoUnlockThreshold: 0
     });
 
     const [showBatchImport, setShowBatchImport] = useState(false);
@@ -605,7 +608,10 @@ export default function App() {
                 icon: dataItem.icon || 'fa-star',
                 imageUrl: dataItem.imageUrl || '',
                 rewardValue: dataItem.rewardValue || 0,
-                bimesters: dataItem.bimesters || [1, 2, 3, 4]
+                bimesters: dataItem.bimesters || [1, 2, 3, 4],
+                autoUnlockEnabled: !!dataItem.autoUnlockCriteria,
+                autoUnlockType: dataItem.autoUnlockCriteria?.type || 'LXC',
+                autoUnlockThreshold: dataItem.autoUnlockCriteria?.threshold || 0
             });
         } else {
             // Reset form
@@ -616,7 +622,10 @@ export default function App() {
                 icon: 'fa-star',
                 imageUrl: '',
                 rewardValue: 0,
-                bimesters: [currentBimester]
+                bimesters: [currentBimester],
+                autoUnlockEnabled: false,
+                autoUnlockType: 'LXC',
+                autoUnlockThreshold: 0
             });
         }
     };
@@ -767,14 +776,15 @@ export default function App() {
             }
         }
         else if (type === 'badge') {
+            const criteria = formData.autoUnlockEnabled ? { type: formData.autoUnlockType, threshold: Number(formData.autoUnlockThreshold) } : undefined;
             if (mode === 'create') {
-                const newItem = { id: uuidv4(), name, icon, imageUrl, description, rewardValue: Number(rewardValue), bimesters: bimesters };
+                const newItem: Badge = { id: uuidv4(), name, icon, imageUrl, description, rewardValue: Number(rewardValue), bimesters: bimesters, autoUnlockCriteria: criteria };
                 newData.badgesCatalog.push(newItem);
                 if (uid) firestoreAddCatalogItem(uid, 'badge', newItem);
             } else {
                 const badge = newData.badgesCatalog.find((b: Badge) => b.id === editingId);
                 if (badge) {
-                    badge.name = name; badge.icon = icon; badge.imageUrl = imageUrl; badge.description = description; badge.rewardValue = Number(rewardValue); badge.bimesters = bimesters;
+                    badge.name = name; badge.icon = icon; badge.imageUrl = imageUrl; badge.description = description; badge.rewardValue = Number(rewardValue); badge.bimesters = bimesters; badge.autoUnlockCriteria = criteria;
                     if (uid) firestoreUpdateCatalogItem('badge', badge);
                 }
             }
@@ -2273,6 +2283,53 @@ export default function App() {
                                 value={formData.imageUrl}
                                 onChange={(e: any) => setFormData({ ...formData, imageUrl: e.target.value })}
                             />
+
+                            {/* Auto Unlock Criteria UI */}
+                            <div className="mt-6 p-4 bg-indigo-50/50 rounded-xl border border-indigo-100">
+                                <div className="flex items-center justify-between mb-4">
+                                    <label className="text-xs font-bold text-indigo-900 uppercase flex items-center gap-2">
+                                        <i className="fas fa-robot text-indigo-500"></i> Desbloqueio Automático
+                                    </label>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFormData({ ...formData, autoUnlockEnabled: !formData.autoUnlockEnabled })}
+                                        className={`w-12 h-6 rounded-full transition-colors relative ${formData.autoUnlockEnabled ? 'bg-indigo-500' : 'bg-slate-300'}`}
+                                    >
+                                        <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${formData.autoUnlockEnabled ? 'translate-x-7' : 'translate-x-1'}`}></div>
+                                    </button>
+                                </div>
+
+                                <p className="text-[10px] text-slate-500 mb-4 leading-tight">
+                                    Se ativado, o sistema entregará esta medalha automaticamente quando o aluno atingir a meta no bimestre selecionado.
+                                </p>
+
+                                {formData.autoUnlockEnabled && (
+                                    <div className="flex gap-3 animate-fade-in">
+                                        <div className="flex-1">
+                                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Tipo de Meta</label>
+                                            <select
+                                                value={formData.autoUnlockType}
+                                                onChange={(e: any) => setFormData({ ...formData, autoUnlockType: e.target.value })}
+                                                className="w-full bg-white border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-indigo-500 text-slate-700 font-medium"
+                                            >
+                                                <option value="LXC">LXC Acumulado</option>
+                                                <option value="TASKS">Total de Tarefas</option>
+                                            </select>
+                                        </div>
+                                        <div className="flex-1">
+                                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Valor Alvo</label>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                value={formData.autoUnlockThreshold || ''}
+                                                onChange={(e: any) => setFormData({ ...formData, autoUnlockThreshold: e.target.value })}
+                                                className="w-full bg-white border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-indigo-500 text-slate-700 font-medium"
+                                                placeholder="Ex: 50"
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     )}
 
