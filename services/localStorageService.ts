@@ -121,7 +121,14 @@ export const saveProfile = (profile: TeacherProfileData) => {
 
 export const exportDataToJSON = () => {
   const data = loadData();
-  const jsonString = JSON.stringify(data, null, 2);
+  const profile = loadProfile();
+
+  const payload = {
+    ...data,
+    _profileBackup: profile
+  };
+
+  const jsonString = JSON.stringify(payload, null, 2);
   const blob = new Blob([jsonString], { type: "application/json" });
   const url = URL.createObjectURL(blob);
 
@@ -138,6 +145,11 @@ export const importDataFromJSON = (jsonContent: string): boolean => {
     const parsed = JSON.parse(jsonContent);
     // Validação básica
     if (!parsed.schools) throw new Error("Arquivo inválido");
+
+    if (parsed._profileBackup) {
+      saveProfile(parsed._profileBackup);
+      delete parsed._profileBackup;
+    }
 
     saveData(parsed);
     return true;

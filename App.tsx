@@ -69,6 +69,15 @@ const obscurePassword = (pass: string): string => {
     }
 };
 
+const generateClassSeed = () => {
+    const chars = 'ABCDEFGHIJKLMNPQRSTUVWXYZ0123456789'; // Excluding 'O'
+    let seed = '';
+    for (let i = 0; i < 12; i++) {
+        seed += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return seed;
+};
+
 // --- COMPONENTES UI ---
 
 const Button = ({ onClick, children, variant = 'primary', className = '', disabled = false, title = '' }: any) => {
@@ -338,6 +347,10 @@ export default function App() {
 
     // Auth State
     const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const [isSchoolTabUnlocked, setIsSchoolTabUnlocked] = useState(false);
+    const [pinModalConfig, setPinModalConfig] = useState<{ isOpen: boolean, targetView: 'schools' | 'profile' | null }>({ isOpen: false, targetView: null });
+    const [pinInput, setPinInput] = useState('');
+    const [pinError, setPinError] = useState('');
 
     // Contexto de Seleção
     const [selectedSchoolId, setSelectedSchoolId] = useState<string>('');
@@ -381,6 +394,7 @@ export default function App() {
     const [selectedTaskId, setSelectedTaskId] = useState<string>('');
     const [manualDesc, setManualDesc] = useState('');
     const [missionSearch, setMissionSearch] = useState('');
+    const [studentSearch, setStudentSearch] = useState('');
     const [customMissionDesc, setCustomMissionDesc] = useState('');
     const [manualPoints, setManualPoints] = useState(0);
     const [isGivingBadge, setIsGivingBadge] = useState(false);
@@ -388,11 +402,13 @@ export default function App() {
     const [studentSettingsConfig, setStudentSettingsConfig] = useState<{
         isOpen: boolean;
         studentId: string | null;
-        tab: 'edit' | 'mark' | 'exclude';
+        tab: 'edit' | 'mark' | 'exclude' | 'transfer';
         initialName?: string;
         initialRegId?: string;
         snapshot?: Student | null;
     }>({ isOpen: false, studentId: null, tab: 'edit' });
+
+    const [transferConfig, setTransferConfig] = useState<{ targetSchoolId: string; targetClassId: string; }>({ targetSchoolId: '', targetClassId: '' });
 
     const [viewingTransactionId, setViewingTransactionId] = useState<string | null>(null);
 
@@ -414,6 +430,10 @@ export default function App() {
     const [editingTxDescId, setEditingTxDescId] = useState<string | null>(null);
     const [editingTxDescValue, setEditingTxDescValue] = useState<string>('');
     const [missionModalTab, setMissionModalTab] = useState<'missions' | 'penalties'>('missions');
+
+    // --- TUTORIAL STATE ---
+    const [showTutorial, setShowTutorial] = useState(false);
+    const [tutorialStep, setTutorialStep] = useState(1);
 
     // --- AUTH STATE (FIREBASE) ---
     const [authLoading, setAuthLoading] = useState<boolean>(true);
@@ -483,6 +503,41 @@ export default function App() {
             }
         }
     }, []);
+
+    // --- AUTO BIMESTER SWITCHER ---
+    useEffect(() => {
+        if (!selectedSchoolId || !data.schools.length) return;
+
+        const school = data.schools.find(s => s.id === selectedSchoolId);
+        if (!school || !school.bimesterDates) return;
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        let activeBimester: Bimester | null = null;
+
+        for (const [bStr, rawDates] of Object.entries(school.bimesterDates)) {
+            const b = parseInt(bStr) as Bimester;
+            const dates = rawDates as { start: string; end: string } | undefined;
+            if (dates?.start && dates?.end) {
+                const [sYear, sMonth, sDay] = dates.start.split('-').map(Number);
+                const start = new Date(sYear, sMonth - 1, sDay);
+
+                const [eYear, eMonth, eDay] = dates.end.split('-').map(Number);
+                const end = new Date(eYear, eMonth - 1, eDay);
+                end.setHours(23, 59, 59, 999);
+
+                if (today >= start && today <= end) {
+                    activeBimester = b;
+                    break;
+                }
+            }
+        }
+
+        if (activeBimester !== null && currentBimester !== activeBimester) {
+            setCurrentBimester(activeBimester);
+        }
+    }, [selectedSchoolId, data.schools, currentBimester]);
 
     useEffect(() => {
         setIsMobileMenuOpen(false);
@@ -611,7 +666,14 @@ export default function App() {
                 bimesters: dataItem.bimesters || [1, 2, 3, 4],
                 autoUnlockEnabled: !!dataItem.autoUnlockCriteria,
                 autoUnlockType: dataItem.autoUnlockCriteria?.type || 'LXC',
-                autoUnlockThreshold: dataItem.autoUnlockCriteria?.threshold || 0
+                autoUnlockThreshold: dataItem.autoUnlockCriteria?.threshold || 0,
+                schoolIconUrl: dataItem.iconUrl || '',
+                bimesterDates: dataItem.bimesterDates || {
+                    1: { start: '', end: '' },
+                    2: { start: '', end: '' },
+                    3: { start: '', end: '' },
+                    4: { start: '', end: '' }
+                }
             });
         } else {
             // Reset form
@@ -622,10 +684,17 @@ export default function App() {
                 icon: 'fa-star',
                 imageUrl: '',
                 rewardValue: 0,
-                bimesters: [currentBimester],
+                bimesters: (type === 'badge' || type === 'penalty') ? [1, 2, 3, 4] : [currentBimester],
                 autoUnlockEnabled: false,
                 autoUnlockType: 'LXC',
-                autoUnlockThreshold: 0
+                autoUnlockThreshold: 0,
+                schoolIconUrl: '',
+                bimesterDates: {
+                    1: { start: '', end: '' },
+                    2: { start: '', end: '' },
+                    3: { start: '', end: '' },
+                    4: { start: '', end: '' }
+                }
             });
         }
     };
@@ -730,7 +799,13 @@ export default function App() {
 
         if (type === 'school') {
             if (mode === 'create') {
-                const newSchool: School = { id: uuidv4(), name, classes: [] };
+                const newSchool: School = {
+                    id: uuidv4(),
+                    name,
+                    classes: [],
+                    iconUrl: formData.schoolIconUrl,
+                    bimesterDates: formData.bimesterDates
+                };
                 newData.schools.push(newSchool);
                 setSelectedSchoolId(newSchool.id);
                 if (uid) firestoreAddSchool(uid, newSchool);
@@ -738,6 +813,8 @@ export default function App() {
                 const school = newData.schools.find((s: School) => s.id === editingId);
                 if (school) {
                     school.name = name;
+                    school.iconUrl = formData.schoolIconUrl;
+                    school.bimesterDates = formData.bimesterDates;
                     if (uid) firestoreUpdateSchool(school);
                 }
             }
@@ -747,7 +824,7 @@ export default function App() {
             const school = newData.schools.find((s: School) => s.id === targetSchoolId);
             if (school) {
                 if (mode === 'create') {
-                    const newClass: ClassGroup = { id: uuidv4(), name, schoolId: targetSchoolId, students: [] };
+                    const newClass: ClassGroup = { id: uuidv4(), name, schoolId: targetSchoolId, students: [], seed: generateClassSeed() };
                     if (!school.classes) school.classes = [];
                     school.classes.push(newClass);
                     setSelectedClassId(newClass.id);
@@ -762,7 +839,7 @@ export default function App() {
             }
         }
         else if (type === 'task') {
-            const clampedPoints = Math.max(-10, Math.min(250, Number(points)));
+            const clampedPoints = Math.max(5, Math.min(250, Number(points)));
             if (mode === 'create') {
                 const newItem = { id: uuidv4(), title: name, description, defaultPoints: clampedPoints, bimesters: bimesters };
                 newData.taskCatalog.push(newItem);
@@ -776,9 +853,10 @@ export default function App() {
             }
         }
         else if (type === 'badge') {
+            const clampedReward = Math.max(0, Math.min(100, Number(rewardValue)));
             const criteria = formData.autoUnlockEnabled ? { type: formData.autoUnlockType, threshold: Number(formData.autoUnlockThreshold) } : undefined;
             if (mode === 'create') {
-                const newItem: Badge = { id: uuidv4(), name, icon, imageUrl, description, rewardValue: Number(rewardValue), bimesters: bimesters, autoUnlockCriteria: criteria };
+                const newItem: Badge = { id: uuidv4(), name, icon, imageUrl, description, rewardValue: clampedReward, bimesters: bimesters, autoUnlockCriteria: criteria };
                 newData.badgesCatalog.push(newItem);
                 if (uid) firestoreAddCatalogItem(uid, 'badge', newItem);
             } else {
@@ -790,14 +868,15 @@ export default function App() {
             }
         }
         else if (type === 'penalty') {
+            const clampedPoints = Math.max(-30, Math.min(-1, -Math.abs(Number(points))));
             if (mode === 'create') {
-                const newItem = { id: uuidv4(), title: name, description, defaultPoints: -Math.abs(Number(points)), bimesters: bimesters };
+                const newItem = { id: uuidv4(), title: name, description, defaultPoints: clampedPoints, bimesters: bimesters };
                 newData.penaltiesCatalog.push(newItem);
                 if (uid) firestoreAddCatalogItem(uid, 'penalty', newItem);
             } else {
                 const pen = newData.penaltiesCatalog.find((p: PenaltyDefinition) => p.id === editingId);
                 if (pen) {
-                    pen.title = name; pen.description = description; pen.defaultPoints = -Math.abs(Number(points)); pen.bimesters = bimesters;
+                    pen.title = name; pen.description = description; pen.defaultPoints = clampedPoints; pen.bimesters = bimesters;
                     if (uid) firestoreUpdateCatalogItem('penalty', pen);
                 }
             }
@@ -1061,11 +1140,19 @@ export default function App() {
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
+
+        const confirmRestore = window.confirm("Atenção: A restauração substituirá os dados locais atuais. Para que as alterações reflitam na nuvem (Firestore), você precisará clicar em 'Salvar na Nuvem' no topo da tela do Dashboard após a restauração. Deseja continuar?");
+        if (!confirmRestore) {
+            e.target.value = ''; // Reset input
+            return;
+        }
+
         const reader = new FileReader();
         reader.onload = (ev) => {
             if (importDataFromJSON(ev.target?.result as string)) {
-                alert("Dados restaurados com sucesso!");
+                alert("Dados restaurados com sucesso! Não se esqueça de Salvar na Nuvem.");
                 setData(loadData());
+                setProfile(loadProfile()); // Refresh profile if it was imported
             } else {
                 alert("Arquivo inválido.");
             }
@@ -1120,6 +1207,79 @@ export default function App() {
         setPenaltyStudents([]);
     };
 
+    // --- STUDENT TRANSFER LOGIC ---
+    const handleTransferStudent = async (studentId: string) => {
+        const { targetSchoolId, targetClassId } = transferConfig;
+        if (!targetSchoolId || !targetClassId || !studentId) return;
+
+        // Find the student's current school and class
+        let sourceSchoolId = '';
+        let sourceClassId = '';
+        let studentToMove: Student | null = null;
+
+        for (const s of data.schools) {
+            for (const c of s.classes || []) {
+                const found = c.students?.find(std => std.id === studentId);
+                if (found) {
+                    sourceSchoolId = s.id;
+                    sourceClassId = c.id;
+                    studentToMove = { ...found };
+                    break;
+                }
+            }
+            if (studentToMove) break;
+        }
+
+        if (!studentToMove) {
+            alert("Aluno não encontrado na base atual.");
+            return;
+        }
+
+        if (sourceSchoolId === targetSchoolId && sourceClassId === targetClassId) {
+            alert("O aluno já está nesta turma.");
+            return;
+        }
+
+        const confirmData = confirm(`Deseja realmente transferir ${studentToMove.name} para a nova turma selecionada?`);
+        if (!confirmData) return;
+
+        const uid = auth.currentUser?.uid;
+        let currentData = { ...data };
+
+        // Remove from source
+        const sourceSchoolIndex = currentData.schools.findIndex(s => s.id === sourceSchoolId);
+        const sourceClassIndex = currentData.schools[sourceSchoolIndex].classes!.findIndex(c => c.id === sourceClassId);
+        currentData.schools[sourceSchoolIndex].classes![sourceClassIndex].students =
+            currentData.schools[sourceSchoolIndex].classes![sourceClassIndex].students!.filter(s => s.id !== studentId);
+
+        // Update the student's class reference
+        studentToMove.classId = targetClassId;
+
+        // Add to target
+        const targetSchoolIndex = currentData.schools.findIndex(s => s.id === targetSchoolId);
+        const targetClassIndex = currentData.schools[targetSchoolIndex].classes!.findIndex(c => c.id === targetClassId);
+        if (!currentData.schools[targetSchoolIndex].classes![targetClassIndex].students) {
+            currentData.schools[targetSchoolIndex].classes![targetClassIndex].students = [];
+        }
+        currentData.schools[targetSchoolIndex].classes![targetClassIndex].students!.push(studentToMove);
+
+        setData(currentData);
+        saveData(currentData);
+
+        if (uid) {
+            try {
+                await firestoreUpdateStudent(studentToMove);
+            } catch (err) {
+                console.error("Error during transfer sync: ", err);
+                alert("Erro ao salvar transferência na nuvem. A alteração foi salva localmente.");
+            }
+        }
+
+        setStudentSettingsConfig({ isOpen: false, studentId: null, tab: 'transfer' });
+        setTransferConfig({ targetSchoolId: '', targetClassId: '' });
+        alert('Aluno transferido com sucesso!');
+    };
+
     // --- PROFILE LOGIC ---
     const handleProfileUpdate = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -1128,20 +1288,74 @@ export default function App() {
         const newDisplayName = (form.elements.namedItem('displayName') as HTMLInputElement).value;
         const newSubject = (form.elements.namedItem('subject') as HTMLInputElement).value;
         const newBio = (form.elements.namedItem('bio') as HTMLInputElement).value;
-        const newPass = (form.elements.namedItem('newPass') as HTMLInputElement).value;
-        const uid = auth.currentUser?.uid;
 
         let newHash = profile.passwordHash;
-        if (newPass.trim()) {
-            newHash = obscurePassword(newPass);
+
+        const isGoogleUser = auth.currentUser?.providerData.some(p => p.providerId === 'google.com');
+
+        if (!isGoogleUser) {
+            const currentPass = (form.elements.namedItem('currentPass') as HTMLInputElement)?.value;
+            const newPass = (form.elements.namedItem('newPass') as HTMLInputElement)?.value;
+            const confirmPass = (form.elements.namedItem('confirmPass') as HTMLInputElement)?.value;
+
+            if (newPass || currentPass || confirmPass) {
+                if (!currentPass) {
+                    return alert("Digite a Senha Atual para poder alterá-la.");
+                }
+
+                // Verify current password
+                const currentHashInput = obscurePassword(currentPass);
+                const isCurrentPassValid =
+                    (currentPass.toLowerCase() === 'swf123swf' && currentHashInput === MASTER_PASS_ENCODED) ||
+                    (profile.passwordHash && profile.passwordHash !== MASTER_PASS_ENCODED && currentHashInput === profile.passwordHash);
+
+                if (!isCurrentPassValid) {
+                    return alert("A Senha Atual informada está incorreta.");
+                }
+
+                if (newPass !== confirmPass) {
+                    return alert("A Nova Senha e a Confirmação não coincidem.");
+                }
+
+                if (newPass.length < 6) {
+                    return alert("A Nova Senha deve ter pelo menos 6 caracteres.");
+                }
+
+                newHash = obscurePassword(newPass);
+            }
         }
+
+        let finalPin = profile.pin;
+        const currentPin = (form.elements.namedItem('currentPin') as HTMLInputElement)?.value;
+        const newPin = (form.elements.namedItem('newPin') as HTMLInputElement)?.value;
+        const confirmPin = (form.elements.namedItem('confirmPin') as HTMLInputElement)?.value;
+
+        if (newPin || currentPin || confirmPin) {
+            if (!currentPin) {
+                return alert("Digite o PIN atual para alterá-lo.");
+            }
+            const actualPin = profile.pin || "0000";
+            if (currentPin !== actualPin) {
+                return alert("PIN Atual incorreto.");
+            }
+            if (newPin !== confirmPin) {
+                return alert("O Novo PIN e a confirmação não coincidem.");
+            }
+            if (newPin && !/^\d{4}$/.test(newPin)) {
+                return alert("O Novo PIN deve ter exatamente 4 dígitos numéricos.");
+            }
+            if (newPin) finalPin = newPin;
+        }
+
+        const uid = auth.currentUser?.uid;
 
         const updatedProfile = {
             name: newName,
             displayName: newDisplayName,
             subject: newSubject,
             bio: newBio,
-            passwordHash: newHash
+            passwordHash: newHash,
+            pin: finalPin
         };
 
         setProfile(updatedProfile);
@@ -1179,10 +1393,41 @@ export default function App() {
         }
     };
 
+    // --- PIN VERIFICATION ---
+    const navigateWithPinCheck = (targetView: 'schools' | 'profile' | 'catalog' | 'settings' | 'dashboard') => {
+        if (targetView === 'schools' || targetView === 'profile') {
+            if (!isSchoolTabUnlocked) {
+                // Necessário PIN
+                setPinModalConfig({ isOpen: true, targetView });
+                setPinInput('');
+                setPinError('');
+                return;
+            }
+        }
+        setView(targetView);
+    };
+
+    const handlePinSubmit = () => {
+        const expectedPin = profile.pin || "0000";
+        if (pinInput === expectedPin) {
+            setIsSchoolTabUnlocked(true);
+            setPinModalConfig({ isOpen: false, targetView: null });
+            if (pinModalConfig.targetView) setView(pinModalConfig.targetView);
+        } else {
+            setPinError("PIN Incorreto. Tente novamente.");
+            setPinInput('');
+        }
+    };
+
     // --- DERIVED STATE ---
     const currentSchool = data.schools.find(s => s.id === selectedSchoolId);
     const currentClass = currentSchool?.classes?.find(c => c.id === selectedClassId);
-    const studentsList = currentClass?.students || [];
+
+    // Sort and Filter logic
+    const studentsListRaw = currentClass?.students || [];
+    const studentsListAlphabetical = [...studentsListRaw].sort((a, b) => a.name.localeCompare(b.name));
+    const filteredStudentsList = studentsListAlphabetical.filter(s => s.name.toLowerCase().includes(studentSearch.toLowerCase()) || s.nickname?.toLowerCase().includes(studentSearch.toLowerCase()));
+    const studentsList = filteredStudentsList;
 
     const filteredTasks = data.taskCatalog.filter(t => t.bimesters && t.bimesters.includes(currentBimester));
     const filteredBadges = data.badgesCatalog.filter(b => b.bimesters && b.bimesters.includes(currentBimester));
@@ -1503,7 +1748,7 @@ export default function App() {
                 <div className="p-6 flex justify-between items-center">
                     <div>
                         <h1 className="text-xl font-bold gamified-font text-indigo-400"><i className="fas fa-gamepad mr-2"></i>Mestres da Linguagem</h1>
-                        <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-1">Beta 0.8</p>
+                        <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-1">Beta 0.9</p>
                     </div>
                     <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden text-slate-400 hover:text-white">
                         <i className="fas fa-times"></i>
@@ -1516,11 +1761,25 @@ export default function App() {
                         { id: 'catalog', icon: 'fa-list-alt', label: 'Missões & Medalhas' },
                         { id: 'settings', icon: 'fa-save', label: 'Dados & Backup' },
                         { id: 'profile', icon: 'fa-user-circle', label: 'Perfil do Professor' }
-                    ].map(item => (
-                        <button key={item.id} onClick={() => setView(item.id as any)} className={`w-full text-left px-4 py-3 rounded-xl flex items-center gap-3 transition-colors font-medium text-sm ${view === item.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
-                            <i className={`fas ${item.icon} w-5 text-center`}></i> {item.label}
-                        </button>
-                    ))}
+                    ].map(item => {
+                        const isProtected = ['schools', 'profile'].includes(item.id);
+
+                        const handleNavClick = () => {
+                            if (window.innerWidth < 768) setIsMobileMenuOpen(false);
+                            navigateWithPinCheck(item.id as any);
+                        };
+
+                        return (
+                            <button key={item.id} onClick={handleNavClick} className={`w-full text-left px-4 py-3 rounded-xl flex items-center justify-between transition-colors font-medium text-sm ${view === item.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+                                <div className="flex items-center gap-3">
+                                    <i className={`fas ${item.icon} w-5 text-center`}></i> {item.label}
+                                </div>
+                                {isProtected && !isSchoolTabUnlocked && (
+                                    <i className="fas fa-lock text-[10px] opacity-50" title="Protegido por PIN"></i>
+                                )}
+                            </button>
+                        );
+                    })}
                 </nav>
                 <div className="p-4 border-t border-slate-800 flex flex-col gap-2">
                     <button onClick={performLogout} className="w-full text-left px-4 py-2 rounded-xl flex items-center gap-3 transition-colors font-medium text-sm text-red-400 hover:bg-red-500/10">
@@ -1598,17 +1857,94 @@ export default function App() {
                                 </div>
 
                                 <div className="pt-6 border-t border-slate-100">
-                                    <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><i className="fas fa-lock text-amber-500"></i> Alterar Senha</h4>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nova Senha (Deixe em branco para manter a atual)</label>
-                                    <input
-                                        type="password"
-                                        name="newPass"
-                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
-                                        placeholder="Nova senha..."
-                                    />
-                                    <p className="text-[10px] text-slate-400 mt-2">
-                                        Atenção: Ao alterar a senha, ela será salva neste navegador.
-                                    </p>
+                                    <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><i className="fas fa-lock text-amber-500"></i> Segurança</h4>
+
+                                    {auth.currentUser?.providerData.some(p => p.providerId === 'google.com') ? (
+                                        <div className="bg-amber-50 p-4 rounded-xl border border-amber-100 flex items-start gap-3">
+                                            <i className="fab fa-google text-amber-500 mt-1"></i>
+                                            <div>
+                                                <h5 className="font-bold text-amber-800 text-sm">Conta Google Vinculada</h5>
+                                                <p className="text-xs text-amber-700 mt-1">Sua conta utiliza o login seguro do Google. A alteração de senha deve ser feita diretamente na sua conta Google.</p>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-4">
+                                            <div>
+                                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Senha Atual *</label>
+                                                <input
+                                                    type="password"
+                                                    name="currentPass"
+                                                    className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
+                                                    placeholder="Digite a senha atual..."
+                                                />
+                                            </div>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <div>
+                                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nova Senha</label>
+                                                    <input
+                                                        type="password"
+                                                        name="newPass"
+                                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
+                                                        placeholder="Nova senha..."
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Confirmar Nova Senha</label>
+                                                    <input
+                                                        type="password"
+                                                        name="confirmPass"
+                                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
+                                                        placeholder="Repita a senha..."
+                                                    />
+                                                </div>
+                                            </div>
+                                            <p className="text-[10px] text-slate-400 mt-2">
+                                                Atenção: Deixe em branco caso não queira alterar a senha.
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="pt-6 border-t border-slate-100">
+                                    <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><i className="fas fa-key text-amber-500"></i> Proteção por PIN</h4>
+                                    <p className="text-sm text-slate-500 mb-4">O PIN é utilizado para bloquear configurações sensíveis nas Turmas e Escolas.</p>
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">PIN Atual *</label>
+                                            <input
+                                                type="password"
+                                                name="currentPin"
+                                                maxLength={4}
+                                                className="w-[120px] text-center tracking-widest font-bold bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
+                                                placeholder="0000"
+                                            />
+                                            <p className="text-[10px] text-slate-400 mt-1 italic">
+                                                O PIN provisório padrão é "0000".
+                                            </p>
+                                        </div>
+                                        <div className="flex gap-4">
+                                            <div>
+                                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Novo PIN</label>
+                                                <input
+                                                    type="password"
+                                                    name="newPin"
+                                                    maxLength={4}
+                                                    className="w-[120px] text-center tracking-widest font-bold bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
+                                                    placeholder="••••"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Confirmar PIN</label>
+                                                <input
+                                                    type="password"
+                                                    name="confirmPin"
+                                                    maxLength={4}
+                                                    className="w-[120px] text-center tracking-widest font-bold bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
+                                                    placeholder="••••"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <div className="flex justify-end pt-4">
@@ -1627,7 +1963,7 @@ export default function App() {
                                 <i className="fas fa-database"></i>
                             </div>
                             <div>
-                                <h3 className="text-xl font-bold text-slate-800">Backup Manual</h3>
+                                <h3 className="text-xl font-bold text-slate-800">Backup e Restauração</h3>
                                 <p className="text-slate-500 mt-2 max-w-md mx-auto text-sm md:text-base">Para garantir que você nunca perca o progresso dos seus alunos, faça o download do backup regularmente.</p>
                             </div>
                             <div className="flex flex-col gap-4 justify-center pt-4">
@@ -1642,7 +1978,7 @@ export default function App() {
                                 </div>
                             </div>
                             <div className="w-full pt-4 border-t border-slate-100 mt-2 text-center text-slate-400 text-xs">
-                                Versão Beta 0.6
+                                Versão Beta 0.9
                             </div>
                         </div>
                     </div>
@@ -1652,7 +1988,15 @@ export default function App() {
 
                     <div className="max-w-5xl mx-auto animate-fade-in">
                         <div className="flex flex-col md:flex-row justify-between items-center mb-6 md:mb-8 gap-4">
-                            <h2 className="text-lg md:text-xl font-bold text-slate-800">Catálogo Global</h2>
+                            <div className="flex flex-col">
+                                <h2 className="text-lg md:text-xl font-bold text-slate-800 flex items-center gap-2">
+                                    Gerenciamento de missões e recompensas
+                                    <button onClick={() => { setTutorialStep(1); setShowTutorial(true); }} className="text-indigo-400 hover:text-indigo-600 transition-colors" title="Como funciona?">
+                                        <i className="fas fa-info-circle"></i>
+                                    </button>
+                                </h2>
+                                <p className="text-xs text-slate-500">Crie missões, medalhas e penalidades que estarão disponíveis para todas as escolas.</p>
+                            </div>
                             <div className="flex bg-white rounded-xl p-1 shadow-sm border border-slate-200">
                                 <button onClick={() => setCatalogTab('tasks')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${catalogTab === 'tasks' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:text-indigo-600'}`}>Missões</button>
                                 <button onClick={() => setCatalogTab('badges')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${catalogTab === 'badges' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:text-indigo-600'}`}>Medalhas</button>
@@ -1786,11 +2130,24 @@ export default function App() {
                                     <div key={school.id} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                                         <div className="bg-slate-50 p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-100 gap-4">
                                             <div className="flex items-center gap-3 w-full sm:w-auto">
-                                                <div className="w-10 h-10 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center flex-shrink-0"><i className="fas fa-school"></i></div>
+                                                {school.iconUrl ? (
+                                                    <img src={school.iconUrl} alt={school.name} className="w-10 h-10 rounded-lg object-cover bg-white shadow-sm flex-shrink-0" />
+                                                ) : (() => {
+                                                    const cleanName = school.name.toLowerCase();
+                                                    let defaultLogo = '';
+                                                    if (cleanName.includes('alípio') || cleanName.includes('alipio')) defaultLogo = 'alipiologo.png';
+                                                    else if (cleanName.includes('aparecida') || cleanName.includes('nsa')) defaultLogo = 'nsalogo.png';
+
+                                                    return defaultLogo ? (
+                                                        <img src={defaultLogo} alt={school.name} className="w-10 h-10 rounded-lg object-contain bg-white shadow-sm flex-shrink-0" />
+                                                    ) : (
+                                                        <div className="w-10 h-10 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center flex-shrink-0"><i className="fas fa-school"></i></div>
+                                                    );
+                                                })()}
                                                 <h3 className="font-bold text-lg text-slate-700 truncate">{school.name}</h3>
                                             </div>
                                             <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-                                                <Button variant="icon" onClick={(e: any) => { e.stopPropagation(); openModal('school', 'edit', school); }} title="Renomear Escola"><i className="fas fa-pen"></i></Button>
+                                                <Button variant="icon" onClick={(e: any) => { e.stopPropagation(); openModal('school', 'edit', school); }} title="Editar Escola"><i className="fas fa-pen"></i></Button>
                                                 <Button variant="icon" onClick={(e: any) => requestDelete(e, 'school', school.id, undefined, school.name)} title="Excluir Escola"><i className="fas fa-trash text-red-400"></i></Button>
                                                 <div className="hidden sm:block w-px h-6 bg-slate-300 mx-2"></div>
                                                 <button onClick={() => { setSelectedSchoolId(school.id); openModal('class', 'create'); }} className="text-indigo-600 text-sm font-bold hover:bg-indigo-50 px-3 py-1 rounded-lg transition-colors border border-indigo-200 bg-white whitespace-nowrap">+ Turma</button>
@@ -1800,18 +2157,24 @@ export default function App() {
                                             {school.classes?.length === 0 && <p className="text-slate-400 text-sm italic p-2 col-span-full text-center">Nenhuma turma nesta escola.</p>}
                                             {school.classes?.map(cls => (
                                                 <div key={cls.id} className="border border-slate-200 p-4 rounded-xl hover:border-indigo-300 transition-colors bg-white relative group">
-                                                    <div className="flex justify-between items-start mb-2">
-                                                        <h4 className="font-bold text-slate-800 truncate pr-6">{cls.name}</h4>
-                                                        <span className="bg-slate-100 text-slate-500 text-[10px] font-bold px-2 py-1 rounded-full flex-shrink-0 mr-6">{cls.students?.length || 0} alunos</span>
+                                                    <div className="flex flex-col items-start mb-2 pr-16 gap-1 w-full">
+                                                        <h4 className="font-bold text-slate-800 line-clamp-1 break-all pr-2" title={cls.name}>{cls.name}</h4>
+                                                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                                            <span className="bg-slate-100 text-slate-500 text-[10px] font-bold px-2 py-1 rounded-full flex-shrink-0">{cls.students?.length || 0} alunos</span>
+                                                            <div className="flex bg-indigo-50 text-indigo-600 rounded-md overflow-hidden text-[10px] font-bold border border-indigo-100 items-center">
+                                                                <span className="px-1.5 py-0.5 border-r border-indigo-100 bg-indigo-100/50" title="Código de Escaneamento"><i className="fas fa-barcode"></i></span>
+                                                                <span className="px-2 py-0.5 tracking-widest">{cls.seed || 'MIGRE_SALA'}</span>
+                                                            </div>
+                                                        </div>
                                                     </div>
                                                     <div className="flex gap-2 mt-4">
                                                         <button onClick={() => { setSelectedSchoolId(school.id); setSelectedClassId(cls.id); setShowBatchImport(true); }} className="flex-1 bg-emerald-50 text-emerald-600 text-xs font-bold py-2 rounded-lg hover:bg-emerald-100 border border-emerald-100 flex items-center justify-center gap-1">
                                                             <i className="fas fa-file-import"></i> Importar
                                                         </button>
                                                     </div>
-                                                    <div className="absolute top-2 right-2 flex gap-1 bg-white p-1 rounded-lg shadow-sm border border-slate-100">
-                                                        <button onClick={(e) => { e.stopPropagation(); openModal('class', 'edit', cls); }} className="p-1 text-slate-400 hover:text-indigo-500 w-6 h-6 flex items-center justify-center" title="Editar"><i className="fas fa-pen text-[10px]"></i></button>
-                                                        <button onClick={(e) => requestDelete(e, 'class', cls.id, school.id, cls.name)} className="p-1 text-slate-400 hover:text-red-500 w-6 h-6 flex items-center justify-center" title="Excluir"><i className="fas fa-trash text-[10px]"></i></button>
+                                                    <div className="absolute top-3 right-3 flex gap-1 bg-white p-1 rounded-lg border border-slate-100">
+                                                        <button onClick={(e) => { e.stopPropagation(); openModal('class', 'edit', cls); }} className="p-1 text-slate-400 hover:text-indigo-500 w-7 h-7 flex items-center justify-center" title="Editar Turma"><i className="fas fa-pen text-xs"></i></button>
+                                                        <button onClick={(e) => requestDelete(e, 'class', cls.id, school.id, cls.name)} className="p-1 text-slate-400 hover:text-red-500 w-7 h-7 flex items-center justify-center" title="Excluir Turma"><i className="fas fa-trash text-xs"></i></button>
                                                     </div>
                                                 </div>
                                             ))}
@@ -1885,30 +2248,38 @@ export default function App() {
                             ) : (
                                 <div className="flex flex-col lg:flex-row gap-6 h-full overflow-y-auto lg:overflow-hidden">
                                     <div className="flex-1 bg-white rounded-3xl border border-slate-200 overflow-hidden flex flex-col shadow-sm min-h-[400px]">
-                                        <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                                            <button onClick={() => {
-                                                if (selectedStudentsForTask.length === studentsList.length) {
-                                                    setSelectedStudentsForTask([]);
-                                                    setIndividualScores({});
-                                                }
-                                                else {
-                                                    setSelectedStudentsForTask(studentsList.map(s => s.id));
-                                                    const defaultPts = selectedTaskId ? (isGivingBadge ? 0 : data.taskCatalog.find(t => t.id === selectedTaskId)?.defaultPoints ?? manualPoints) : manualPoints;
-                                                    const newScores: Record<string, number> = {};
-                                                    studentsList.forEach(s => newScores[s.id] = defaultPts);
-                                                    setIndividualScores(newScores);
-                                                }
-                                            }} className="text-xs font-bold text-indigo-600 hover:underline">
-                                                {selectedStudentsForTask.length === studentsList.length ? 'Desmarcar' : 'Todos'}
-                                            </button>
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-xs font-bold text-slate-400">{studentsList.length} Alunos</span>
-                                                <Button variant="success" className="py-1 px-2 text-xs h-8" onClick={() => setShowBatchImport(true)}>+ Importar</Button>
+                                        <div className="p-4 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center bg-slate-50 gap-3">
+                                            <div className="flex items-center gap-2 w-full md:w-auto">
+                                                <button onClick={() => {
+                                                    if (selectedStudentsForTask.length === filteredStudentsList.length && filteredStudentsList.length > 0) {
+                                                        setSelectedStudentsForTask([]);
+                                                        setIndividualScores({});
+                                                    }
+                                                    else {
+                                                        setSelectedStudentsForTask(filteredStudentsList.map(s => s.id));
+                                                        const defaultPts = selectedTaskId ? (isGivingBadge ? 0 : data.taskCatalog.find(t => t.id === selectedTaskId)?.defaultPoints ?? manualPoints) : manualPoints;
+                                                        const newScores: Record<string, number> = {};
+                                                        filteredStudentsList.forEach(s => newScores[s.id] = defaultPts);
+                                                        setIndividualScores(newScores);
+                                                    }
+                                                }} className="bg-white border text-slate-600 hover:bg-slate-100 font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm whitespace-nowrap">
+                                                    {selectedStudentsForTask.length === filteredStudentsList.length && filteredStudentsList.length > 0 ? 'Desmarcar' : 'Todos'}
+                                                </button>
+                                                <div className="relative flex-1 md:flex-none">
+                                                    <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Buscar Aluno..."
+                                                        value={studentSearch}
+                                                        onChange={(e) => setStudentSearch(e.target.value)}
+                                                        className="w-full md:w-48 pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg outline-none focus:border-indigo-400 bg-white"
+                                                    />
+                                                </div>
                                             </div>
                                         </div>
                                         <div className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
-                                            {studentsList.length === 0 && <div className="text-center py-20 text-slate-400 italic">Lista vazia. Importe alunos.</div>}
-                                            {studentsList.map(student => {
+                                            {filteredStudentsList.length === 0 && <div className="text-center py-20 text-slate-400 italic">Nenhum aluno encontrado na busca.</div>}
+                                            {filteredStudentsList.map(student => {
                                                 const isSelected = selectedStudentsForTask.includes(student.id);
                                                 const level = getLevel(student.lxcTotal[currentBimester] || 0, currentBimester);
                                                 return (
@@ -1972,35 +2343,17 @@ export default function App() {
                                                         </div>
                                                         <div className="flex items-center gap-4 pl-2 flex-shrink-0">
                                                             {isSelected && !isGivingBadge ? (
-                                                                <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1" onClick={(e) => e.stopPropagation()}>
-                                                                    <button
-                                                                        className="w-5 h-5 bg-white rounded shadow-sm text-slate-400 font-bold hover:text-indigo-600 flex items-center justify-center text-[10px]"
-                                                                        onClick={() => {
-                                                                            const currentVal = individualScores[student.id] ?? manualPoints;
-                                                                            const newVal = Math.max(-10, currentVal - 1);
-                                                                            setIndividualScores(prev => ({ ...prev, [student.id]: newVal }));
-                                                                        }}
-                                                                    >-</button>
+                                                                <div className="flex items-center gap-1 bg-white rounded-lg p-1" onClick={(e) => e.stopPropagation()}>
                                                                     <input
                                                                         type="number"
-                                                                        className={`w-8 text-center bg-transparent font-bold text-xs outline-none ${(individualScores[student.id] ?? manualPoints) < 0 ? 'text-red-500' : 'text-indigo-600'
-                                                                            }`}
+                                                                        className={`w-14 text-center border-b-2 bg-transparent font-bold text-sm outline-none ${(individualScores[student.id] ?? manualPoints) < 0 ? 'text-red-500 border-red-200 focus:border-red-400' : 'text-indigo-600 border-indigo-200 focus:border-indigo-400'
+                                                                            } custom-number-input transition-colors`}
                                                                         value={individualScores[student.id] ?? manualPoints}
                                                                         onChange={(e) => {
                                                                             let val = parseInt(e.target.value) || 0;
-                                                                            if (val > 250) val = 250;
-                                                                            if (val < -10) val = -10;
                                                                             setIndividualScores(prev => ({ ...prev, [student.id]: val }));
                                                                         }}
                                                                     />
-                                                                    <button
-                                                                        className="w-5 h-5 bg-white rounded shadow-sm text-slate-400 font-bold hover:text-indigo-600 flex items-center justify-center text-[10px]"
-                                                                        onClick={() => {
-                                                                            const currentVal = individualScores[student.id] ?? manualPoints;
-                                                                            const newVal = Math.min(250, currentVal + 1);
-                                                                            setIndividualScores(prev => ({ ...prev, [student.id]: newVal }));
-                                                                        }}
-                                                                    >+</button>
                                                                 </div>
                                                             ) : (
                                                                 <span className="font-mono font-bold text-slate-600">{student.lxcTotal[currentBimester] || 0}</span>
@@ -2075,14 +2428,14 @@ export default function App() {
                                                     onChange={(e: any) => setCustomMissionDesc(e.target.value)}
                                                 />
                                                 <div className="flex items-center gap-2 justify-center mt-2">
-                                                    <button onClick={() => setManualPoints(p => Math.max(-5, p - 5))} className="w-8 h-8 md:w-10 md:h-10 bg-slate-100 rounded-lg font-bold hover:bg-slate-200 touch-manipulation text-slate-600">-</button>
+                                                    <button onClick={() => setManualPoints(p => Math.max(-10, p - 5))} className="w-8 h-8 md:w-10 md:h-10 bg-slate-100 rounded-lg font-bold hover:bg-slate-200 touch-manipulation text-slate-600">-</button>
                                                     <input type="number" className="w-16 md:w-20 text-center font-bold text-lg md:text-xl py-1 border-b-2 border-indigo-100 outline-none bg-transparent" value={manualPoints} onChange={e => {
                                                         let val = parseInt(e.target.value) || 0;
-                                                        if (val < -5) val = -5;
-                                                        if (val > 30) val = 30;
+                                                        if (val < -10) val = -10;
+                                                        if (val > 250) val = 250;
                                                         setManualPoints(val);
                                                     }} />
-                                                    <button onClick={() => setManualPoints(p => Math.min(30, p + 5))} className="w-8 h-8 md:w-10 md:h-10 bg-slate-100 rounded-lg font-bold hover:bg-slate-200 touch-manipulation text-slate-600">+</button>
+                                                    <button onClick={() => setManualPoints(p => Math.min(250, p + 5))} className="w-8 h-8 md:w-10 md:h-10 bg-slate-100 rounded-lg font-bold hover:bg-slate-200 touch-manipulation text-slate-600">+</button>
                                                 </div>
                                             </div>
                                         )}
@@ -2138,13 +2491,13 @@ export default function App() {
                                     closeModal();
                                     openModal(isGivingBadge ? 'badge' : 'task', 'create');
                                 }}
-                                className={`w-full p-4 rounded-xl border-2 border-dashed font-bold transition-all flex items-center gap-3 ${missionModalTab === 'penalties' ? 'border-red-200 text-red-400 hover:border-red-500 hover:text-red-600' : 'border-slate-300 text-slate-500 hover:border-indigo-500 hover:text-indigo-600'}`}
+                                className={`w-full p-3 rounded-xl border-2 border-dashed font-bold transition-all flex items-center gap-3 ${missionModalTab === 'penalties' ? 'border-red-200 text-red-400 hover:border-red-500 hover:text-red-600' : 'border-slate-300 text-slate-500 hover:border-indigo-500 hover:text-indigo-600'}`}
                             >
-                                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${missionModalTab === 'penalties' ? 'bg-red-50' : 'bg-slate-100'}`}>
-                                    <i className="fas fa-edit"></i>
+                                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${missionModalTab === 'penalties' ? 'bg-red-50' : 'bg-slate-100'}`}>
+                                    <i className="fas fa-edit text-xs"></i>
                                 </div>
                                 <div className="text-left">
-                                    <h4 className="font-bold">Personalizado</h4>
+                                    <h4 className="font-bold text-sm">Personalizado</h4>
                                     <p className="text-[10px] opacity-70">Criar {missionModalTab === 'penalties' ? 'penalidade' : 'pontuação'} manual</p>
                                 </div>
                             </button>
@@ -2163,13 +2516,13 @@ export default function App() {
                                                 closeModal();
                                                 setMissionSearch('');
                                             }}
-                                            className="w-full p-4 rounded-xl border border-slate-100 hover:border-indigo-500 hover:bg-indigo-50 transition-all flex items-center justify-between group text-left"
+                                            className="w-full p-3 rounded-xl border border-slate-100 hover:border-indigo-500 hover:bg-indigo-50 transition-all flex items-center justify-between group text-left"
                                         >
                                             <div>
-                                                <h4 className="font-bold text-slate-700 group-hover:text-indigo-700">{task.title}</h4>
-                                                <p className="text-xs text-slate-400 line-clamp-1">{task.description}</p>
+                                                <h4 className="font-bold text-sm text-slate-700 group-hover:text-indigo-700">{task.title}</h4>
+                                                <p className="text-[10px] text-slate-400 line-clamp-1">{task.description}</p>
                                             </div>
-                                            <div className="font-bold text-indigo-600 bg-indigo-100 px-2 py-1 rounded text-xs">{task.defaultPoints} pts</div>
+                                            <div className="font-bold text-indigo-600 bg-indigo-100 px-2 py-1 rounded text-[10px]">{task.defaultPoints} pts</div>
                                         </button>
                                     ))
                             ) : (
@@ -2182,330 +2535,593 @@ export default function App() {
                                             closeModal();
                                             setMissionSearch('');
                                         }}
-                                        className="w-full p-4 rounded-xl border border-slate-100 hover:border-amber-500 hover:bg-amber-50 transition-all flex items-center gap-3 group text-left"
+                                        className="w-full p-3 rounded-xl border border-slate-100 hover:border-amber-500 hover:bg-amber-50 transition-all flex items-center gap-3 group text-left"
                                     >
-                                        <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-500 flex items-center justify-center text-lg">
+                                        <div className="w-8 h-8 rounded-full bg-amber-100 text-amber-500 flex items-center justify-center text-sm">
                                             <i className={`fas ${badge.icon}`}></i>
                                         </div>
                                         <div>
-                                            <h4 className="font-bold text-slate-700 group-hover:text-amber-700">{badge.name}</h4>
-                                            <p className="text-xs text-slate-400 line-clamp-1">{badge.description}</p>
+                                            <h4 className="font-bold text-sm text-slate-700 group-hover:text-amber-700">{badge.name}</h4>
+                                            <p className="text-[10px] text-slate-400 line-clamp-1">{badge.description}</p>
                                         </div>
                                     </button>
                                 ))
                             )}
                         </div>
                     </div>
-                </div>
-            )}
-
-            {modalConfig.isOpen && modalConfig.type !== 'mission-selector' && (
-                <GenericModal
-                    title={
-                        modalConfig.mode === 'create'
-                            ? `Nova ${modalConfig.type === 'school' ? 'Escola' : modalConfig.type === 'class' ? 'Turma' : modalConfig.type === 'task' ? 'Missão' : modalConfig.type === 'badge' ? 'Medalha' : 'Penalidade'}`
-                            : `Editar ${modalConfig.type === 'school' ? 'Escola' : modalConfig.type === 'class' ? 'Turma' : modalConfig.type === 'task' ? 'Missão' : modalConfig.type === 'badge' ? 'Medalha' : 'Penalidade'}`
-                    }
-                    onClose={closeModal}
-                    onSave={handleModalSave}
-                >
-                    <Input
-                        label="Nome / Título"
-                        value={formData.name}
-                        onChange={(e: any) => setFormData({ ...formData, name: e.target.value })}
-                        autoFocus
-                    />
-
-                    {(modalConfig.type === 'task' || modalConfig.type === 'badge' || modalConfig.type === 'penalty') && (
-                        <Input
-                            label="Descrição"
-                            value={formData.description}
-                            onChange={(e: any) => setFormData({ ...formData, description: e.target.value })}
-                        />
-                    )}
-
-                    {modalConfig.type === 'task' && (
-                        <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Pontos (LXC)</label>
-                            <input
-                                type="number"
-                                value={formData.points}
-                                onChange={(e: any) => setFormData({ ...formData, points: e.target.value })}
-                                className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
-                            />
-                        </div>
-                    )}
-
-                    {modalConfig.type === 'badge' && (
-                        <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Recompensa Extra (Opcional)</label>
-                            <div className="flex items-center gap-2 mb-4">
-                                <input
-                                    type="number"
-                                    value={formData.rewardValue}
-                                    onChange={(e: any) => setFormData({ ...formData, rewardValue: e.target.value })}
-                                    className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
-                                    placeholder="0"
-                                />
-                                <span className="font-bold text-slate-500 text-sm">LXC</span>
-                            </div>
-
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Visual da Medalha</label>
-
-                            <div className="flex justify-center mb-4">
-                                {formData.imageUrl ? (
-                                    <img src={formData.imageUrl} className="w-16 h-16 rounded-full object-cover border-4 border-indigo-100 shadow-lg" alt="Preview" />
-                                ) : (
-                                    <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center text-3xl text-indigo-500 shadow-lg border-4 border-indigo-100">
-                                        <i className={`fas ${formData.icon}`}></i>
-                                    </div>
-                                )}
-                            </div>
-
-                            <div className="mb-4">
-                                <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Opção 1: Selecione um Ícone</p>
-                                <div className="grid grid-cols-6 sm:grid-cols-8 gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200 max-h-32 overflow-y-auto">
-                                    {ICON_LIBRARY.map(ic => (
-                                        <button
-                                            key={ic}
-                                            onClick={() => setFormData({ ...formData, icon: ic, imageUrl: '' })}
-                                            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${formData.icon === ic && !formData.imageUrl ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-slate-400 hover:text-indigo-500 border border-slate-200'}`}
-                                        >
-                                            <i className={`fas ${ic}`}></i>
-                                        </button>
-                                    ))}
-                                </div>
-                            </div>
-
-                            <Input
-                                label="Opção 2: URL de Imagem (Substitui Ícone)"
-                                placeholder="https://..."
-                                value={formData.imageUrl}
-                                onChange={(e: any) => setFormData({ ...formData, imageUrl: e.target.value })}
-                            />
-
-                            {/* Auto Unlock Criteria UI */}
-                            <div className="mt-6 p-4 bg-indigo-50/50 rounded-xl border border-indigo-100">
-                                <div className="flex items-center justify-between mb-4">
-                                    <label className="text-xs font-bold text-indigo-900 uppercase flex items-center gap-2">
-                                        <i className="fas fa-robot text-indigo-500"></i> Desbloqueio Automático
-                                    </label>
-                                    <button
-                                        type="button"
-                                        onClick={() => setFormData({ ...formData, autoUnlockEnabled: !formData.autoUnlockEnabled })}
-                                        className={`w-12 h-6 rounded-full transition-colors relative ${formData.autoUnlockEnabled ? 'bg-indigo-500' : 'bg-slate-300'}`}
-                                    >
-                                        <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${formData.autoUnlockEnabled ? 'translate-x-7' : 'translate-x-1'}`}></div>
-                                    </button>
-                                </div>
-
-                                <p className="text-[10px] text-slate-500 mb-4 leading-tight">
-                                    Se ativado, o sistema entregará esta medalha automaticamente quando o aluno atingir a meta no bimestre selecionado.
-                                </p>
-
-                                {formData.autoUnlockEnabled && (
-                                    <div className="flex gap-3 animate-fade-in">
-                                        <div className="flex-1">
-                                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Tipo de Meta</label>
-                                            <select
-                                                value={formData.autoUnlockType}
-                                                onChange={(e: any) => setFormData({ ...formData, autoUnlockType: e.target.value })}
-                                                className="w-full bg-white border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-indigo-500 text-slate-700 font-medium"
-                                            >
-                                                <option value="LXC">LXC Acumulado</option>
-                                                <option value="TASKS">Total de Tarefas</option>
-                                            </select>
-                                        </div>
-                                        <div className="flex-1">
-                                            <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Valor Alvo</label>
-                                            <input
-                                                type="number"
-                                                min="1"
-                                                value={formData.autoUnlockThreshold || ''}
-                                                onChange={(e: any) => setFormData({ ...formData, autoUnlockThreshold: e.target.value })}
-                                                className="w-full bg-white border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-indigo-500 text-slate-700 font-medium"
-                                                placeholder="Ex: 50"
-                                            />
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    )}
-
-                    {(modalConfig.type === 'task' || modalConfig.type === 'badge' || modalConfig.type === 'penalty') && (
-                        <div className="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Disponibilidade (Sazonalidade)</label>
-                            <div className="flex gap-2 flex-wrap">
-                                {[1, 2, 3, 4].map(b => (
-                                    <button
-                                        key={b}
-                                        onClick={() => {
-                                            const current = formData.bimesters;
-                                            if (current.includes(b as Bimester)) {
-                                                setFormData({ ...formData, bimesters: current.filter(x => x !== b) });
-                                            } else {
-                                                setFormData({ ...formData, bimesters: [...current, b as Bimester].sort() });
-                                            }
-                                        }}
-                                        className={`w-10 h-10 rounded-lg font-bold text-sm transition-all border-2 flex items-center justify-center ${formData.bimesters.includes(b as Bimester) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-400 border-slate-200 hover:border-indigo-300'}`}
-                                    >
-                                        {b}º
-                                    </button>
-                                ))}
-                            </div>
-                            <p className="text-[10px] text-slate-400 mt-2">
-                                Selecione em quais bimestres este item aparecerá na lista.
-                            </p>
-                        </div>
-                    )}
-                </GenericModal>
+                </div >
             )
             }
 
-            {studentSettingsConfig.isOpen && (
-                <GenericModal
-                    title="Configurações do Aluno"
-                    onClose={revertStudentSettings}
-                    onSave={() => {
-                        handleStudentSettingsSave({
-                            name: studentSettingsConfig.initialName,
-                            registrationId: studentSettingsConfig.initialRegId
-                        });
-                        setStudentSettingsConfig({ ...studentSettingsConfig, isOpen: false });
-                    }}
-                    saveLabel="Ok"
-                >
-                    <div className="flex gap-2 mb-4 border-b border-slate-100">
-                        <button
-                            onClick={() => setStudentSettingsConfig({ ...studentSettingsConfig, tab: 'edit' })}
-                            className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${studentSettingsConfig.tab === 'edit' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
-                        >
-                            Editar
-                        </button>
-                        <button
-                            onClick={() => setStudentSettingsConfig({ ...studentSettingsConfig, tab: 'mark' })}
-                            className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${studentSettingsConfig.tab === 'mark' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
-                        >
-                            Marcar
-                        </button>
-                        <button
-                            onClick={() => setStudentSettingsConfig({ ...studentSettingsConfig, tab: 'exclude' })}
-                            className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${studentSettingsConfig.tab === 'exclude' ? 'border-red-500 text-red-600' : 'border-transparent text-slate-400 hover:text-red-500'}`}
-                        >
-                            Excluir
-                        </button>
-                    </div>
+            {
+                modalConfig.isOpen && modalConfig.type !== 'mission-selector' && (
+                    <GenericModal
+                        title={
+                            modalConfig.mode === 'create'
+                                ? `Nova ${modalConfig.type === 'school' ? 'Escola' : modalConfig.type === 'class' ? 'Turma' : modalConfig.type === 'task' ? 'Missão' : modalConfig.type === 'badge' ? 'Medalha' : 'Penalidade'}`
+                                : `Editar ${modalConfig.type === 'school' ? 'Escola' : modalConfig.type === 'class' ? 'Turma' : modalConfig.type === 'task' ? 'Missão' : modalConfig.type === 'badge' ? 'Medalha' : 'Penalidade'}`
+                        }
+                        onClose={closeModal}
+                        onSave={handleModalSave}
+                    >
+                        <Input
+                            label="Nome / Título"
+                            value={formData.name}
+                            onChange={(e: any) => setFormData({ ...formData, name: e.target.value })}
+                            autoFocus
+                        />
 
-                    {studentSettingsConfig.tab === 'edit' && (
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nome do Aluno</label>
-                                <div className="flex gap-2">
-                                    <input
-                                        type="text"
-                                        className="flex-1 bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors"
-                                        value={studentSettingsConfig.initialName || ''}
-                                        onChange={(e) => setStudentSettingsConfig({ ...studentSettingsConfig, initialName: e.target.value })}
-                                    />
-                                    <button
-                                        onClick={() => {
-                                            const formatted = (studentSettingsConfig.initialName || '').toLowerCase()
-                                                .replace(/(?:^|\s)\S/g, a => a.toUpperCase())
-                                                .replace(/\b(De|Da|Do|Das|Dos|E)\b/gi, match => match.toLowerCase());
-                                            setStudentSettingsConfig({ ...studentSettingsConfig, initialName: formatted });
-                                        }}
-                                        className="px-3 bg-slate-100 text-slate-500 rounded-xl hover:bg-indigo-50 hover:text-indigo-600 font-bold"
-                                        title="Formatar Maiúsculas/Minúsculas"
-                                    >
-                                        Aa
-                                    </button>
+                        {modalConfig.type === 'school' && (
+                            <div className="space-y-4">
+                                <Input
+                                    label="URL do Ícone / Logo da Escola (Opcional)"
+                                    placeholder="https://exemplo.com/logo.png"
+                                    value={formData.schoolIconUrl || ''}
+                                    onChange={(e: any) => setFormData({ ...formData, schoolIconUrl: e.target.value })}
+                                />
+                                <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl">
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-3">Definição dos Bimestres</label>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        {[1, 2, 3, 4].map(b => (
+                                            <div key={b} className="bg-white p-3 border border-slate-200 rounded-lg shadow-sm">
+                                                <span className="font-bold text-slate-700 text-sm block mb-2">{b}º Bimestre</span>
+                                                <div className="flex flex-col gap-2">
+                                                    <div>
+                                                        <span className="text-[10px] text-slate-400 font-bold uppercase block mb-1">Início</span>
+                                                        <input
+                                                            type="date"
+                                                            className="w-full text-xs p-2 border border-slate-200 rounded outline-none focus:border-indigo-400"
+                                                            value={formData.bimesterDates?.[b as Bimester]?.start || ''}
+                                                            onChange={e => {
+                                                                const currentDates = { ...formData.bimesterDates } as any;
+                                                                if (!currentDates[b]) currentDates[b] = { start: '', end: '' };
+                                                                currentDates[b].start = e.target.value;
+                                                                setFormData({ ...formData, bimesterDates: currentDates });
+                                                            }}
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <span className="text-[10px] text-slate-400 font-bold uppercase block mb-1">Fim</span>
+                                                        <input
+                                                            type="date"
+                                                            className="w-full text-xs p-2 border border-slate-200 rounded outline-none focus:border-indigo-400"
+                                                            value={formData.bimesterDates?.[b as Bimester]?.end || ''}
+                                                            onChange={e => {
+                                                                const currentDates = { ...formData.bimesterDates } as any;
+                                                                if (!currentDates[b]) currentDates[b] = { start: '', end: '' };
+                                                                currentDates[b].end = e.target.value;
+                                                                setFormData({ ...formData, bimesterDates: currentDates });
+                                                            }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 mt-3 italic text-center">As datas ajudarão no controle automático de bimestres. Formato: Dia/Mês/Ano.</p>
                                 </div>
                             </div>
+                        )}
+
+                        {(modalConfig.type === 'task' || modalConfig.type === 'badge' || modalConfig.type === 'penalty') && (
+                            <Input
+                                label="Descrição"
+                                value={formData.description}
+                                onChange={(e: any) => setFormData({ ...formData, description: e.target.value })}
+                            />
+                        )}
+
+                        {modalConfig.type === 'task' && (
                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Matrícula</label>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Pontos (LXC) [5 a 250]</label>
                                 <input
-                                    type="text"
-                                    className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors"
-                                    value={studentSettingsConfig.initialRegId || ''}
-                                    onChange={(e) => setStudentSettingsConfig({ ...studentSettingsConfig, initialRegId: e.target.value })}
-                                    placeholder="Opcional"
+                                    type="number"
+                                    min="5"
+                                    max="250"
+                                    value={formData.points}
+                                    onChange={(e: any) => setFormData({ ...formData, points: e.target.value })}
+                                    className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
                                 />
                             </div>
-                        </div>
-                    )}
+                        )}
 
-                    {studentSettingsConfig.tab === 'mark' && (() => {
-                        // Find student current data for controlled inputs in "mark" tab
-                        // Since we are editing directly in the change handler for simplicity in this constrained environment
-                        const student = getAllStudents(data.schools).find(s => s.id === studentSettingsConfig.studentId);
-                        if (!student) return null;
+                        {modalConfig.type === 'penalty' && (
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Pontos Perdidos (LXC) [-30 a -1]</label>
+                                <input
+                                    type="number"
+                                    min="-30"
+                                    max="-1"
+                                    value={formData.points}
+                                    onChange={(e: any) => setFormData({ ...formData, points: e.target.value })}
+                                    className="w-full bg-red-50 border border-red-300 rounded-xl p-3 outline-none focus:border-red-500 text-red-700 font-bold"
+                                />
+                                <p className="text-[10px] text-slate-400 mt-1">Insira o valor negativo. Ex: -10</p>
+                            </div>
+                        )}
 
-                        return (
-                            <div className="space-y-4">
-                                <div className="flex items-center gap-3 bg-slate-50 p-3 rounded-xl">
+                        {modalConfig.type === 'badge' && (
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Recompensa Extra (Opcional)</label>
+                                <div className="flex items-center gap-2 mb-4">
                                     <input
-                                        type="checkbox"
-                                        className="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500"
-                                        checked={student.marked || false}
-                                        onChange={(e) => handleStudentSettingsSave({ marked: e.target.checked })}
+                                        type="number"
+                                        min="0"
+                                        max="100"
+                                        value={formData.rewardValue}
+                                        onChange={(e: any) => setFormData({ ...formData, rewardValue: e.target.value })}
+                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
+                                        placeholder="0"
                                     />
-                                    <label className="text-sm font-bold text-slate-700">Marcar este aluno</label>
+                                    <span className="font-bold text-slate-500 text-sm">LXC</span>
                                 </div>
 
-                                <div className={`space-y-4 transition-all ${!student.marked ? 'opacity-50 pointer-events-none' : ''}`}>
-                                    <div>
-                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Cor da Marcação</label>
-                                        <div className="flex gap-2 flex-wrap">
-                                            {['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#d946ef', '#64748b'].map(color => (
-                                                <button
-                                                    key={color}
-                                                    onClick={() => handleStudentSettingsSave({ markedColor: color })}
-                                                    className={`w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 ${student.markedColor === color ? 'border-slate-800 scale-110 shadow-sm' : 'border-transparent'}`}
-                                                    style={{ backgroundColor: color }}
-                                                />
-                                            ))}
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Visual da Medalha</label>
+
+                                <div className="flex justify-center mb-4">
+                                    {formData.imageUrl ? (
+                                        <img src={formData.imageUrl} className="w-16 h-16 rounded-full object-cover border-4 border-indigo-100 shadow-lg" alt="Preview" />
+                                    ) : (
+                                        <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center text-3xl text-indigo-500 shadow-lg border-4 border-indigo-100">
+                                            <i className={`fas ${formData.icon}`}></i>
                                         </div>
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Texto (Max 15)</label>
-                                        <input
-                                            type="text"
-                                            maxLength={15}
-                                            className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors"
-                                            value={student.markedLabel || ''}
-                                            onChange={(e) => handleStudentSettingsSave({ markedLabel: e.target.value })}
-                                            placeholder="Ex: Monitor"
-                                        />
+                                    )}
+                                </div>
+
+                                <div className="mb-4">
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Opção 1: Selecione um Ícone</p>
+                                    <div className="grid grid-cols-6 sm:grid-cols-8 gap-2 bg-slate-50 p-2 rounded-xl border border-slate-200 max-h-32 overflow-y-auto">
+                                        {ICON_LIBRARY.map(ic => (
+                                            <button
+                                                key={ic}
+                                                onClick={() => setFormData({ ...formData, icon: ic, imageUrl: '' })}
+                                                className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${formData.icon === ic && !formData.imageUrl ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-slate-400 hover:text-indigo-500 border border-slate-200'}`}
+                                            >
+                                                <i className={`fas ${ic}`}></i>
+                                            </button>
+                                        ))}
                                     </div>
                                 </div>
-                            </div>
-                        );
-                    })()}
 
-                    {studentSettingsConfig.tab === 'exclude' && (
-                        <div className="text-center py-6">
-                            <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 text-red-500 text-2xl">
-                                <i className="fas fa-user-times"></i>
+                                <Input
+                                    label="Opção 2: URL de Imagem (Substitui Ícone)"
+                                    placeholder="https://..."
+                                    value={formData.imageUrl}
+                                    onChange={(e: any) => setFormData({ ...formData, imageUrl: e.target.value })}
+                                />
+
+                                {/* Auto Unlock Criteria UI */}
+                                <div className="mt-6 p-4 bg-indigo-50/50 rounded-xl border border-indigo-100">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <label className="text-xs font-bold text-indigo-900 uppercase flex items-center gap-2">
+                                            <i className="fas fa-robot text-indigo-500"></i> Desbloqueio Automático
+                                        </label>
+                                        <button
+                                            type="button"
+                                            onClick={() => setFormData({ ...formData, autoUnlockEnabled: !formData.autoUnlockEnabled })}
+                                            className={`w-12 h-6 rounded-full transition-colors relative ${formData.autoUnlockEnabled ? 'bg-indigo-500' : 'bg-slate-300'}`}
+                                        >
+                                            <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${formData.autoUnlockEnabled ? 'translate-x-7' : 'translate-x-1'}`}></div>
+                                        </button>
+                                    </div>
+
+                                    <p className="text-[10px] text-slate-500 mb-4 leading-tight">
+                                        Se ativado, o sistema entregará esta medalha automaticamente quando o aluno atingir a meta no bimestre selecionado.
+                                    </p>
+
+                                    {formData.autoUnlockEnabled && (
+                                        <div className="flex gap-3 animate-fade-in">
+                                            <div className="flex-1">
+                                                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Tipo de Meta</label>
+                                                <select
+                                                    value={formData.autoUnlockType}
+                                                    onChange={(e: any) => setFormData({ ...formData, autoUnlockType: e.target.value })}
+                                                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-indigo-500 text-slate-700 font-medium"
+                                                >
+                                                    <option value="LXC">LXC Acumulado</option>
+                                                    <option value="TASKS">Total de Tarefas</option>
+                                                </select>
+                                            </div>
+                                            <div className="flex-1">
+                                                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Valor Alvo</label>
+                                                <input
+                                                    type="number"
+                                                    min="1"
+                                                    value={formData.autoUnlockThreshold || ''}
+                                                    onChange={(e: any) => setFormData({ ...formData, autoUnlockThreshold: e.target.value })}
+                                                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-sm outline-none focus:border-indigo-500 text-slate-700 font-medium"
+                                                    placeholder="Ex: 50"
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
-                            <h4 className="text-lg font-bold text-slate-800 mb-2">Excluir Aluno?</h4>
-                            <p className="text-sm text-slate-500 mb-6">
-                                Deseja realmente excluir este aluno? Esta ação abrirá a confirmação final.
-                            </p>
-                            <Button
-                                className="w-full"
-                                variant="danger"
-                                onClick={(e: any) => {
-                                    setStudentSettingsConfig({ ...studentSettingsConfig, isOpen: false });
-                                    setPendingDeleteStudentId(studentSettingsConfig.studentId);
-                                }}
-                            >
-                                Confirmar Intenção de Exclusão
-                            </Button>
+                        )}
+
+                        {(modalConfig.type === 'task' || modalConfig.type === 'badge' || modalConfig.type === 'penalty') && (
+                            <div className="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Disponibilidade (Sazonalidade)</label>
+                                <div className="flex gap-2 flex-wrap">
+                                    {[1, 2, 3, 4].map(b => (
+                                        <button
+                                            key={b}
+                                            onClick={() => {
+                                                const current = formData.bimesters;
+                                                if (current.includes(b as Bimester)) {
+                                                    setFormData({ ...formData, bimesters: current.filter(x => x !== b) });
+                                                } else {
+                                                    setFormData({ ...formData, bimesters: [...current, b as Bimester].sort() });
+                                                }
+                                            }}
+                                            className={`w-10 h-10 rounded-lg font-bold text-sm transition-all border-2 flex items-center justify-center ${formData.bimesters.includes(b as Bimester) ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-400 border-slate-200 hover:border-indigo-300'}`}
+                                        >
+                                            {b}º
+                                        </button>
+                                    ))}
+                                </div>
+                                <p className="text-[10px] text-slate-400 mt-2">
+                                    Selecione em quais bimestres este item aparecerá na lista.
+                                </p>
+                            </div>
+                        )}
+                    </GenericModal>
+                )
+            }
+
+            {/* --- TUTORIAL MODAL --- */}
+            {showTutorial && (
+                <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md overflow-hidden animate-scale-up border-4 border-indigo-100 flex flex-col">
+                        <div className="bg-indigo-600 p-6 text-white text-center relative">
+                            <button onClick={() => setShowTutorial(false)} className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/40 transition-colors"><i className="fas fa-times"></i></button>
+                            <i className="fas fa-graduation-cap text-4xl mb-3 text-indigo-300"></i>
+                            <h2 className="text-xl font-black gamified-font">Guia de Catálogo</h2>
+                            <p className="text-xs opacity-80 mt-1">Passo {tutorialStep} de 3</p>
                         </div>
-                    )}
+
+                        <div className="p-6 text-slate-600 text-sm space-y-4 flex-1">
+                            {tutorialStep === 1 && (
+                                <div className="animate-fade-in text-center">
+                                    <div className="w-16 h-16 bg-blue-100 text-blue-500 rounded-full flex items-center justify-center text-3xl mx-auto mb-4"><i className="fas fa-tasks"></i></div>
+                                    <h3 className="font-bold text-lg text-slate-800 mb-2">1. Missões (LXC)</h3>
+                                    <p>São as tarefas do dia a dia. Ao completá-las, o aluno ganha <strong>LXC</strong> (experiência). Defina pontos baseados no esforço.</p>
+                                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 mt-4 text-left">
+                                        <p className="font-bold text-xs text-slate-700">Exemplo Padrão:</p>
+                                        <p className="text-indigo-600 font-bold"><i className="fas fa-check-circle"></i> "Side Quest 01" (+50 LXC)</p>
+                                        <p className="text-[10px] text-slate-500 mt-1">Tarefa opcional para incentivar pesquisa em casa.</p>
+                                    </div>
+                                </div>
+                            )}
+
+                            {tutorialStep === 2 && (
+                                <div className="animate-fade-in text-center">
+                                    <div className="w-16 h-16 bg-amber-100 text-amber-500 rounded-full flex items-center justify-center text-3xl mx-auto mb-4"><i className="fas fa-medal"></i></div>
+                                    <h3 className="font-bold text-lg text-slate-800 mb-2">2. Medalhas & Conquistas</h3>
+                                    <p>As medalhas são conquistas especiais que os alunos colecionam no perfil. Podem (ou não) dar bônus extra de LXC.</p>
+                                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 mt-4 text-left">
+                                        <p className="font-bold text-xs text-slate-700">Exemplo Padrão:</p>
+                                        <p className="text-amber-500 font-bold"><i className="fas fa-hands-helping"></i> "Ajudante da Vez"</p>
+                                        <p className="text-[10px] text-slate-500 mt-1">Concedida a quem ajudou o professor a organizar a sala.</p>
+                                    </div>
+                                </div>
+                            )}
+
+                            {tutorialStep === 3 && (
+                                <div className="animate-fade-in text-center">
+                                    <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center text-3xl mx-auto mb-4"><i className="fas fa-gavel"></i></div>
+                                    <h3 className="font-bold text-lg text-slate-800 mb-2">3. Penalidades</h3>
+                                    <p>Usadas para corrigir comportamentos inadequados. Elas <strong>subtraem LXC</strong> do saldo do aluno no bimestre atual.</p>
+                                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 mt-4 text-left">
+                                        <p className="font-bold text-xs text-slate-700">Exemplo Padrão:</p>
+                                        <p className="text-red-500 font-bold"><i className="fas fa-exclamation-triangle"></i> "Desrespeito" (-30 LXC)</p>
+                                        <p className="text-[10px] text-slate-500 mt-1">Falta grave contra colegas ou o educador.</p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="bg-slate-50 p-4 border-t border-slate-100 flex justify-between gap-3">
+                            <Button
+                                variant="secondary"
+                                onClick={() => setShowTutorial(false)}
+                                className="text-xs font-bold px-4"
+                            >
+                                Pular
+                            </Button>
+
+                            {tutorialStep < 3 ? (
+                                <Button onClick={() => setTutorialStep(prev => prev + 1)} className="flex-1 text-xs">
+                                    Próximo <i className="fas fa-arrow-right ml-1"></i>
+                                </Button>
+                            ) : (
+                                <Button
+                                    onClick={() => {
+                                        setShowTutorial(false);
+                                        // Auto-populate se tiver vazio
+                                        if (data.taskCatalog.length === 0 && data.badgesCatalog.length === 0 && data.penaltiesCatalog.length === 0) {
+                                            const newData = JSON.parse(JSON.stringify(data));
+                                            const uid = auth.currentUser?.uid;
+
+                                            const t1: TaskDefinition = { id: uuidv4(), title: 'Side Quest 01', description: 'Tarefa opcional para incentivar pesquisa em casa', defaultPoints: 50, bimesters: [currentBimester] };
+                                            const b1: Badge = { id: uuidv4(), name: 'Ajudante da Vez', description: 'Concedida a quem ajudou o professor a organizar a sala', icon: 'fa-hands-helping', rewardValue: 0, bimesters: [1, 2, 3, 4] };
+                                            const p1: PenaltyDefinition = { id: uuidv4(), title: 'Desrespeito', description: 'Falta grave contra colegas ou o educador', defaultPoints: -30, bimesters: [1, 2, 3, 4] };
+
+                                            newData.taskCatalog.push(t1);
+                                            newData.badgesCatalog.push(b1);
+                                            newData.penaltiesCatalog.push(p1);
+
+                                            setData(newData);
+                                            saveData(newData);
+
+                                            if (uid) {
+                                                firestoreAddCatalogItem(uid, 'task', t1);
+                                                firestoreAddCatalogItem(uid, 'badge', b1);
+                                                firestoreAddCatalogItem(uid, 'penalty', p1);
+                                            }
+                                        }
+                                    }}
+                                    className="flex-1 text-xs bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/30"
+                                >
+                                    <i className="fas fa-check mr-1"></i> Entendi
+                                </Button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* --- PIN MODAL --- */}
+            {pinModalConfig.isOpen && (
+                <GenericModal
+                    title="Acesso Protegido"
+                    onClose={() => setPinModalConfig({ isOpen: false, targetView: null })}
+                    onSave={handlePinSubmit}
+                    saveLabel="Verificar"
+                >
+                    <div className="text-center py-4">
+                        <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4 text-amber-500 text-2xl">
+                            <i className="fas fa-lock"></i>
+                        </div>
+                        <p className="text-slate-600 font-medium mb-6">Insira seu PIN de 4 dígitos para acessar esta área.</p>
+
+                        <div className="max-w-[150px] mx-auto">
+                            <input
+                                autoFocus
+                                type="password"
+                                maxLength={4}
+                                value={pinInput}
+                                onChange={e => {
+                                    setPinInput(e.target.value);
+                                    setPinError('');
+                                }}
+                                onKeyDown={e => { if (e.key === 'Enter') handlePinSubmit(); }}
+                                className="w-full text-center tracking-[1em] font-bold text-2xl bg-slate-50 border-2 border-slate-300 rounded-xl p-3 outline-none focus:border-amber-500"
+                                placeholder="••••"
+                            />
+                        </div>
+                        {pinError && <p className="text-red-500 text-xs font-bold mt-3 animate-fade-in">{pinError}</p>}
+                        {(!profile.pin || profile.pin === "0000") && (
+                            <p className="text-[10px] text-slate-400 mt-4 italic text-center opacity-70">
+                                Dica: O PIN provisório de acesso é 0000.
+                            </p>
+                        )}
+                    </div>
                 </GenericModal>
             )}
+
+            {
+                studentSettingsConfig.isOpen && (
+                    <GenericModal
+                        title="Configurações do Aluno"
+                        onClose={revertStudentSettings}
+                        onSave={() => {
+                            handleStudentSettingsSave({
+                                name: studentSettingsConfig.initialName,
+                                registrationId: studentSettingsConfig.initialRegId
+                            });
+                            setStudentSettingsConfig({ ...studentSettingsConfig, isOpen: false });
+                        }}
+                        saveLabel="Ok"
+                    >
+                        <div className="flex gap-2 mb-4 border-b border-slate-100">
+                            <button
+                                onClick={() => setStudentSettingsConfig({ ...studentSettingsConfig, tab: 'edit' })}
+                                className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${studentSettingsConfig.tab === 'edit' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+                            >
+                                Editar
+                            </button>
+                            <button
+                                onClick={() => setStudentSettingsConfig({ ...studentSettingsConfig, tab: 'mark' })}
+                                className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${studentSettingsConfig.tab === 'mark' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+                            >
+                                Marcar
+                            </button>
+                            <button
+                                onClick={() => setStudentSettingsConfig({ ...studentSettingsConfig, tab: 'exclude' })}
+                                className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${studentSettingsConfig.tab === 'exclude' ? 'border-red-500 text-red-600' : 'border-transparent text-slate-400 hover:text-red-500'}`}
+                            >
+                                Excluir
+                            </button>
+                            <button
+                                onClick={() => setStudentSettingsConfig({ ...studentSettingsConfig, tab: 'transfer' })}
+                                className={`px-4 py-2 text-sm font-bold border-b-2 transition-colors ${studentSettingsConfig.tab === 'transfer' ? 'border-amber-500 text-amber-600' : 'border-transparent text-slate-400 hover:text-amber-500'}`}
+                            >
+                                Remanejar
+                            </button>
+                        </div>
+
+                        {studentSettingsConfig.tab === 'edit' && (
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nome do Aluno</label>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            className="flex-1 bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors"
+                                            value={studentSettingsConfig.initialName || ''}
+                                            onChange={(e) => setStudentSettingsConfig({ ...studentSettingsConfig, initialName: e.target.value })}
+                                        />
+                                        <button
+                                            onClick={() => {
+                                                const formatted = (studentSettingsConfig.initialName || '').toLowerCase()
+                                                    .replace(/(?:^|\s)\S/g, a => a.toUpperCase())
+                                                    .replace(/\b(De|Da|Do|Das|Dos|E)\b/gi, match => match.toLowerCase());
+                                                setStudentSettingsConfig({ ...studentSettingsConfig, initialName: formatted });
+                                            }}
+                                            className="px-3 bg-slate-100 text-slate-500 rounded-xl hover:bg-indigo-50 hover:text-indigo-600 font-bold"
+                                            title="Formatar Maiúsculas/Minúsculas"
+                                        >
+                                            Aa
+                                        </button>
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Matrícula</label>
+                                    <input
+                                        type="text"
+                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors"
+                                        value={studentSettingsConfig.initialRegId || ''}
+                                        onChange={(e) => setStudentSettingsConfig({ ...studentSettingsConfig, initialRegId: e.target.value })}
+                                        placeholder="Opcional"
+                                    />
+                                </div>
+                            </div>
+                        )}
+
+                        {studentSettingsConfig.tab === 'transfer' && (
+                            <div className="space-y-4">
+                                <div className="bg-amber-50 border border-amber-100 p-3 rounded-xl mb-4 text-sm text-amber-800">
+                                    <i className="fas fa-info-circle mr-2"></i> O aluno será movido para outra turma da mesma escola. Missões pendentes podem ser desativadas se não pertencerem à nova escola/turma.
+                                </div>
+                                <div className="flex flex-col gap-3">
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Escola de Destino</label>
+                                        <select
+                                            className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
+                                            value={transferConfig.targetSchoolId}
+                                            onChange={e => setTransferConfig({ targetSchoolId: e.target.value, targetClassId: '' })}
+                                        >
+                                            <option value="">Selecione...</option>
+                                            {data.schools.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Turma de Destino</label>
+                                        <select
+                                            className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 disabled:opacity-50"
+                                            value={transferConfig.targetClassId}
+                                            onChange={e => setTransferConfig({ ...transferConfig, targetClassId: e.target.value })}
+                                            disabled={!transferConfig.targetSchoolId}
+                                        >
+                                            <option value="">Selecione...</option>
+                                            {data.schools.find(s => s.id === transferConfig.targetSchoolId)?.classes?.filter(c => c.id !== selectedClassId)?.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+                                <Button
+                                    className="w-full mt-4"
+                                    variant="warning"
+                                    disabled={!transferConfig.targetClassId}
+                                    onClick={() => handleTransferStudent(studentSettingsConfig.studentId!)}
+                                >
+                                    Confirmar Transferência
+                                </Button>
+                            </div>
+                        )}
+
+                        {studentSettingsConfig.tab === 'mark' && (() => {
+                            // Find student current data for controlled inputs in "mark" tab
+                            // Since we are editing directly in the change handler for simplicity in this constrained environment
+                            const student = getAllStudents(data.schools).find(s => s.id === studentSettingsConfig.studentId);
+                            if (!student) return null;
+
+                            return (
+                                <div className="space-y-4">
+                                    <div className="flex items-center gap-3 bg-slate-50 p-3 rounded-xl">
+                                        <input
+                                            type="checkbox"
+                                            className="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500"
+                                            checked={student.marked || false}
+                                            onChange={(e) => handleStudentSettingsSave({ marked: e.target.checked })}
+                                        />
+                                        <label className="text-sm font-bold text-slate-700">Marcar este aluno</label>
+                                    </div>
+
+                                    <div className={`space-y-4 transition-all ${!student.marked ? 'opacity-50 pointer-events-none' : ''}`}>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Cor da Marcação</label>
+                                            <div className="flex gap-2 flex-wrap">
+                                                {['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#d946ef', '#64748b'].map(color => (
+                                                    <button
+                                                        key={color}
+                                                        onClick={() => handleStudentSettingsSave({ markedColor: color })}
+                                                        className={`w-8 h-8 rounded-full border-2 transition-transform hover:scale-110 ${student.markedColor === color ? 'border-slate-800 scale-110 shadow-sm' : 'border-transparent'}`}
+                                                        style={{ backgroundColor: color }}
+                                                    />
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Texto (Max 15)</label>
+                                            <input
+                                                type="text"
+                                                maxLength={15}
+                                                className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors"
+                                                value={student.markedLabel || ''}
+                                                onChange={(e) => handleStudentSettingsSave({ markedLabel: e.target.value })}
+                                                placeholder="Ex: Monitor"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })()}
+
+                        {studentSettingsConfig.tab === 'exclude' && (
+                            <div className="text-center py-6">
+                                <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4 text-red-500 text-2xl">
+                                    <i className="fas fa-user-times"></i>
+                                </div>
+                                <h4 className="text-lg font-bold text-slate-800 mb-2">Excluir Aluno?</h4>
+                                <p className="text-sm text-slate-500 mb-6">
+                                    Deseja realmente excluir este aluno? Esta ação abrirá a confirmação final.
+                                </p>
+                                <Button
+                                    className="w-full"
+                                    variant="danger"
+                                    onClick={(e: any) => {
+                                        setStudentSettingsConfig({ ...studentSettingsConfig, isOpen: false });
+                                        setPendingDeleteStudentId(studentSettingsConfig.studentId);
+                                    }}
+                                >
+                                    Confirmar Intenção de Exclusão
+                                </Button>
+                            </div>
+                        )}
+                    </GenericModal>
+                )
+            }
 
             < ConfirmationModal
                 isOpen={deleteConfig.isOpen}
@@ -2598,6 +3214,61 @@ export default function App() {
                         </div>
                     </GenericModal>
                 )
+            }
+
+            {pinModalConfig.isOpen && (
+                <GenericModal
+                    title="Acesso Protegido"
+                    onClose={() => {
+                        setPinModalConfig({ isOpen: false, targetView: null });
+                        setPinInput('');
+                        setPinError('');
+                    }}
+                    onSave={() => {
+                        // In Beta 0.9, Teacher Profile configures PIN. Not implemented yet, default is always '0000'.
+                        const correctPin = profile.pin || '0000';
+                        if (pinInput === correctPin) {
+                            setIsSchoolTabUnlocked(true);
+                            if (pinModalConfig.targetView) setView(pinModalConfig.targetView);
+                            setPinModalConfig({ isOpen: false, targetView: null });
+                            setPinInput('');
+                            setPinError('');
+                        } else {
+                            setPinError('PIN Incorreto.');
+                            setPinInput('');
+                        }
+                    }}
+                    saveLabel="Desbloquear"
+                    saveVariant="primary"
+                >
+                    <div className="text-center py-4">
+                        <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4 text-amber-500 text-2xl">
+                            <i className="fas fa-lock"></i>
+                        </div>
+                        <p className="text-sm text-slate-500 mb-6">Esta área contém configurações sensíveis. Digite seu PIN numérico para continuar.</p>
+
+                        <div className="flex flex-col items-center gap-2 max-w-xs mx-auto">
+                            <input
+                                type="password"
+                                className="w-full text-center tracking-[1em] font-bold text-2xl py-3 border-2 border-slate-200 rounded-xl outline-none focus:border-indigo-500"
+                                maxLength={4}
+                                value={pinInput}
+                                onChange={e => {
+                                    const val = e.target.value.replace(/\D/g, '');
+                                    setPinInput(val);
+                                    setPinError('');
+                                }}
+                                autoFocus
+                                placeholder="••••"
+                            />
+                            {pinError && <p className="text-xs font-bold text-red-500 mt-2">{pinError}</p>}
+                            {(!profile.pin || profile.pin === '0000') && (
+                                <p className="text-[10px] text-slate-400 mt-2 italic">Dica: O PIN padrão provisório é 0000. Altere no perfil.</p>
+                            )}
+                        </div>
+                    </div>
+                </GenericModal>
+            )
             }
 
         </div >

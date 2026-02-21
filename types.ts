@@ -14,6 +14,7 @@ export interface TeacherProfileData {
   subject: string;
   bio: string;
   passwordHash: string; // Armazena apenas o Hash
+  pin?: string; // PIN de 4 dígitos numéricos para desbloqueio
 }
 
 export interface Student {
@@ -46,6 +47,10 @@ export interface ClassGroup {
 export interface School {
   id: string;
   name: string;
+  iconUrl?: string; // Novo: URL do ícone customizado da escola
+  bimesterDates?: {
+    [key in Bimester]?: { start: string; end: string } // Formato YYYY-MM-DD
+  };
   classes?: ClassGroup[];
 }
 

@@ -15,6 +15,15 @@ import { db } from "./firebase";
 import { Student, Transaction, School, ClassGroup, TaskDefinition, Badge, PenaltyDefinition, TeacherProfileData, Bimester } from "../types";
 import { AppData } from "./localStorageService";
 
+const generateSeed = () => {
+  const chars = 'ABCDEFGHIJKLMNPQRSTUVWXYZ0123456789';
+  let seed = '';
+  for (let i = 0; i < 12; i++) {
+    seed += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return seed;
+};
+
 // Collection Names
 const COLL_USERS = 'users';
 const COLL_SCHOOLS = 'schools';
@@ -284,7 +293,7 @@ export const firestoreSyncAll = async (uid: string, data: AppData, profile: Teac
     s.classes?.forEach(c => {
       // Auto-generate seed if not present
       if (!c.seed) {
-        c.seed = Math.random().toString(36).substring(2, 8).toUpperCase();
+        c.seed = generateSeed();
       }
 
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
