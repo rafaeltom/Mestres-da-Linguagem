@@ -10,6 +10,7 @@ export interface LevelRule {
 
 export interface TeacherProfileData {
   name: string;
+  displayName?: string; // Nome a ser exibido
   subject: string;
   bio: string;
   passwordHash: string; // Armazena apenas o Hash
@@ -58,6 +59,8 @@ export interface Transaction {
   date: Date;
   studentName?: string;
   hash?: string;
+  customDescription?: string;
+  teacherName?: string; // Nome a ser exibido do professor
 }
 
 // Novo: Definição de Tarefa Padrão (O "Cardápio")
@@ -87,6 +90,7 @@ export interface Badge {
   rewardValue?: number; // Novo: Recompensa opcional em LXC ao ganhar a medalha
   bimesters: Bimester[]; // Quais bimestres essa medalha está disponível
   cost?: number; // Se custar algo para comprar (futuro)
+  autoUnlockCriteria?: { type: 'LXC' | 'TASKS'; threshold: number }; // Requisito automático
 }
 
 export interface SchoolStats {

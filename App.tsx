@@ -233,8 +233,7 @@ const LoginScreen = ({ onLogin }: { onLogin: (e: string, p: string) => Promise<b
                     <div className="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center text-3xl text-indigo-400 shadow-lg mb-4">
                         <i className="fas fa-gamepad"></i>
                     </div>
-                    <h1 className="text-2xl font-black gamified-font text-slate-800 text-center">Mestres da Linguagem</h1>
-                    <p className="text-xs text-slate-400 font-bold tracking-widest uppercase mt-1">Beta 0.5</p>
+                    <h1 className="text-xl font-black gamified-font text-slate-800 text-center">Mestres da Linguagem</h1>
                 </div>
 
                 <form onSubmit={handleAuth} className="space-y-4 max-h-[60vh] overflow-y-auto px-1 pb-2 custom-scrollbar">
@@ -322,7 +321,7 @@ const LoginScreen = ({ onLogin }: { onLogin: (e: string, p: string) => Promise<b
 
                 <p className="text-[10px] text-center text-slate-400 mt-6 flex flex-col items-center gap-1">
                     <span>&copy; 2026 Projeto Mestres da Linguagem</span>
-                    <span className="uppercase tracking-widest font-bold text-indigo-400/50">Beta 0.6</span>
+                    <span className="uppercase tracking-widest font-bold text-indigo-400/50">Beta 0.7</span>
                 </p>
             </div>
         </div>
@@ -378,7 +377,9 @@ export default function App() {
     const [selectedStudentsForTask, setSelectedStudentsForTask] = useState<string[]>([]);
     const [selectedTaskId, setSelectedTaskId] = useState<string>('');
     const [manualDesc, setManualDesc] = useState('');
-    const [manualPoints, setManualPoints] = useState(10);
+    const [missionSearch, setMissionSearch] = useState('');
+    const [customMissionDesc, setCustomMissionDesc] = useState('');
+    const [manualPoints, setManualPoints] = useState(0);
     const [isGivingBadge, setIsGivingBadge] = useState(false);
 
     const [studentSettingsConfig, setStudentSettingsConfig] = useState<{
@@ -387,14 +388,19 @@ export default function App() {
         tab: 'edit' | 'mark' | 'exclude';
         initialName?: string;
         initialRegId?: string;
+        snapshot?: Student | null;
     }>({ isOpen: false, studentId: null, tab: 'edit' });
+
+    const [viewingTransactionId, setViewingTransactionId] = useState<string | null>(null);
+
+    const [pendingDeleteStudentId, setPendingDeleteStudentId] = useState<string | null>(null);
 
     // Estado para pontuação individual nesta rodada
     const [individualScores, setIndividualScores] = useState<Record<string, number>>({});
 
     // Estado para Penalidades
     const [catalogTab, setCatalogTab] = useState<'tasks' | 'badges' | 'penalties'>('tasks');
-    const [applyPenaltyConfig, setApplyPenaltyConfig] = useState<{ isOpen: boolean; penaltyId: string | null; }>({ isOpen: false, penaltyId: null });
+    const [applyPenaltyConfig, setApplyPenaltyConfig] = useState<{ isOpen: boolean; penaltyId: string | null; amount: number }>({ isOpen: false, penaltyId: null, amount: 0 });
     const [penaltyStudents, setPenaltyStudents] = useState<string[]>([]);
     const [penaltyClassId, setPenaltyClassId] = useState<string>('');
     const [penaltySchoolId, setPenaltySchoolId] = useState<string>('');
@@ -402,6 +408,8 @@ export default function App() {
     // Estado para edição de transação individual
     const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null);
     const [editingTransactionValue, setEditingTransactionValue] = useState<string>('');
+    const [editingTxDescId, setEditingTxDescId] = useState<string | null>(null);
+    const [editingTxDescValue, setEditingTxDescValue] = useState<string>('');
     const [missionModalTab, setMissionModalTab] = useState<'missions' | 'penalties'>('missions');
 
     // --- AUTH STATE (FIREBASE) ---
@@ -563,7 +571,20 @@ export default function App() {
         }
     };
 
-
+    const saveTxDescEdit = (id: string) => {
+        let newData = JSON.parse(JSON.stringify(data));
+        const txIndex = newData.transactions.findIndex((t: Transaction) => t.id === id);
+        if (txIndex > -1) {
+            newData.transactions[txIndex].customDescription = editingTxDescValue;
+            setData(newData);
+            saveData(newData);
+            const uid = auth.currentUser?.uid;
+            if (uid) {
+                firestoreUpdateTransaction(newData.transactions[txIndex]).catch(console.error);
+            }
+        }
+        setEditingTxDescId(null);
+    };
 
     // --- CRUD HANDLERS ---
 
@@ -606,8 +627,38 @@ export default function App() {
             studentId: student.id,
             tab: 'edit',
             initialName: student.name,
-            initialRegId: student.registrationId
+            initialRegId: student.registrationId,
+            snapshot: JSON.parse(JSON.stringify(student))
         });
+    };
+
+    const revertStudentSettings = async () => {
+        const snap = studentSettingsConfig.snapshot;
+        if (!snap || !studentSettingsConfig.studentId) {
+            setStudentSettingsConfig({ ...studentSettingsConfig, isOpen: false });
+            return;
+        }
+
+        const newData = JSON.parse(JSON.stringify(data));
+        const uid = auth.currentUser?.uid;
+        let found = false;
+
+        newData.schools.forEach((school: School) => {
+            school.classes?.forEach((cls: ClassGroup) => {
+                const sIndex = cls.students?.findIndex((s: Student) => s.id === snap.id);
+                if (sIndex !== undefined && sIndex > -1 && cls.students) {
+                    cls.students[sIndex] = snap;
+                    found = true;
+                }
+            });
+        });
+
+        if (found) {
+            setData(newData);
+            saveData(newData);
+            if (uid) firestoreUpdateStudent(snap).catch(console.error);
+        }
+        setStudentSettingsConfig({ ...studentSettingsConfig, isOpen: false });
     };
 
     const handleStudentSettingsSave = async (updates: Partial<Student>) => {
@@ -702,14 +753,15 @@ export default function App() {
             }
         }
         else if (type === 'task') {
+            const clampedPoints = Math.max(-10, Math.min(250, Number(points)));
             if (mode === 'create') {
-                const newItem = { id: uuidv4(), title: name, description, defaultPoints: Number(points), bimesters: bimesters };
+                const newItem = { id: uuidv4(), title: name, description, defaultPoints: clampedPoints, bimesters: bimesters };
                 newData.taskCatalog.push(newItem);
                 if (uid) firestoreAddCatalogItem(uid, 'task', newItem);
             } else {
                 const task = newData.taskCatalog.find((t: TaskDefinition) => t.id === editingId);
                 if (task) {
-                    task.title = name; task.description = description; task.defaultPoints = Number(points); task.bimesters = bimesters;
+                    task.title = name; task.description = description; task.defaultPoints = clampedPoints; task.bimesters = bimesters;
                     if (uid) firestoreUpdateCatalogItem('task', task);
                 }
             }
@@ -777,6 +829,8 @@ export default function App() {
                     }
                 });
             });
+            if (studentSettingsConfig.isOpen && studentSettingsConfig.studentId === id) setStudentSettingsConfig({ ...studentSettingsConfig, isOpen: false });
+            if (view === 'student-view' && viewingStudentId === id) setView('dashboard');
             if (uid && id) firestoreDeleteStudent(id);
         }
         else if (type === 'task') {
@@ -845,6 +899,7 @@ export default function App() {
                     type: 'BADGE',
                     amount: badge.rewardValue || 0,
                     description: badge.name, // Use name instead of ID for description
+                    customDescription: customMissionDesc || badge.description,
                     bimester: currentBimester,
                     date: new Date()
                 };
@@ -903,6 +958,10 @@ export default function App() {
                 // Final check on type
                 let type: 'TASK' | 'PENALTY' | 'BONUS' = points < 0 ? 'PENALTY' : 'TASK';
                 if (!desc) desc = type === 'PENALTY' ? "Penalidade" : "Atividade";
+                if (!selectedTaskId && (!desc || !desc.trim())) {
+                    alert("Você precisa informar um Título / Motivo para a missão personalizada.");
+                    return; // Prevent further execution
+                }
 
                 const tx: Transaction = {
                     id: uuidv4(),
@@ -910,8 +969,10 @@ export default function App() {
                     type: type,
                     amount: points,
                     description: desc,
+                    customDescription: customMissionDesc || (task ? task.description : penalty ? penalty.description : ''),
                     bimester: currentBimester,
-                    date: new Date()
+                    date: new Date(),
+                    ...(type === 'TASK' ? { teacherName: profile?.displayName || profile?.name?.split(' ')[0] || 'Professor' } : {})
                 };
 
                 // Update Local Data (Optimistic)
@@ -921,6 +982,46 @@ export default function App() {
                 const student = cls?.students?.find((st: Student) => st.id === sid);
                 if (student) {
                     student.lxcTotal[currentBimester] = (student.lxcTotal[currentBimester] || 0) + points;
+
+                    // NEW LOGIC: check and award automatic badges
+                    student.badges = student.badges || [];
+                    const autoBadges = currentData.badgesCatalog.filter((b: Badge) =>
+                        b.autoUnlockCriteria &&
+                        b.bimesters?.includes(currentBimester) &&
+                        !student.badges.includes(b.id)
+                    );
+
+                    autoBadges.forEach((badge: Badge) => {
+                        const crit = badge.autoUnlockCriteria!;
+                        let unlock = false;
+                        if (crit.type === 'LXC') {
+                            if ((student.lxcTotal[currentBimester] || 0) >= crit.threshold) unlock = true;
+                        } else if (crit.type === 'TASKS') {
+                            const taskCount = currentData.transactions.filter((t: Transaction) => t.studentId === student.id && t.type === 'TASK' && t.bimester === currentBimester).length;
+                            if (taskCount >= crit.threshold) unlock = true;
+                        }
+
+                        if (unlock) {
+                            student.badges.push(badge.id);
+
+                            const autoTx: Transaction = {
+                                id: uuidv4(),
+                                studentId: student.id,
+                                type: 'BADGE',
+                                amount: badge.rewardValue || 0,
+                                description: badge.name,
+                                customDescription: "Desbloqueio Automático",
+                                bimester: currentBimester,
+                                date: new Date(),
+                                teacherName: 'Sistema'
+                            };
+                            currentData.transactions.push(autoTx);
+                            if (badge.rewardValue) {
+                                student.lxcTotal[currentBimester] = (student.lxcTotal[currentBimester] || 0) + badge.rewardValue;
+                            }
+                            if (uid) txPromises.push(firestoreGiveRewardAtomic(uid, autoTx));
+                        }
+                    });
                 }
 
                 if (uid) txPromises.push(firestoreGiveRewardAtomic(uid, tx));
@@ -939,6 +1040,7 @@ export default function App() {
         setSelectedStudentsForTask([]);
         setIndividualScores({});
         setManualDesc('');
+        setCustomMissionDesc('');
         setManualPoints(10);
         setIsGivingBadge(false);
         setSelectedTaskId('');
@@ -964,6 +1066,7 @@ export default function App() {
     // --- PENALTY APPLICATION SYSTEM ---
     const applyPenalty = async () => {
         if (!applyPenaltyConfig.penaltyId || penaltyStudents.length === 0) return alert("Selecione alunos e uma penalidade.");
+        if (applyPenaltyConfig.amount > -1 || applyPenaltyConfig.amount < -30) return alert("Penalidade inválida (-30 a -1).");
         const uid = auth.currentUser?.uid;
 
         const penalty = data.penaltiesCatalog.find(p => p.id === applyPenaltyConfig.penaltyId);
@@ -978,7 +1081,7 @@ export default function App() {
                 id: uuidv4(),
                 studentId: sid,
                 type: 'PENALTY',
-                amount: penalty.defaultPoints, // Já é negativo
+                amount: applyPenaltyConfig.amount, // Usa o montante editado
                 description: penalty.title, // Pode ser customizada no futuro se quiser
                 bimester: currentBimester,
                 date: new Date()
@@ -990,7 +1093,7 @@ export default function App() {
             const cls = school?.classes?.find((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid));
             const student = cls?.students?.find((st: Student) => st.id === sid);
             if (student) {
-                student.lxcTotal[currentBimester] = (student.lxcTotal[currentBimester] || 0) + penalty.defaultPoints;
+                student.lxcTotal[currentBimester] = (student.lxcTotal[currentBimester] || 0) + applyPenaltyConfig.amount;
             }
 
             if (uid) txPromises.push(firestoreGiveRewardAtomic(uid, tx));
@@ -1003,7 +1106,7 @@ export default function App() {
         Promise.all(txPromises).catch(err => console.error("Erro ao aplicar penalidades no Firestore:", err));
 
         alert(`${appliedCount} penalidade(s) aplicada(s).`);
-        setApplyPenaltyConfig({ isOpen: false, penaltyId: null });
+        setApplyPenaltyConfig({ isOpen: false, penaltyId: null, amount: 0 });
         setPenaltyStudents([]);
     };
 
@@ -1012,6 +1115,7 @@ export default function App() {
         e.preventDefault();
         const form = e.target as HTMLFormElement;
         const newName = (form.elements.namedItem('name') as HTMLInputElement).value;
+        const newDisplayName = (form.elements.namedItem('displayName') as HTMLInputElement).value;
         const newSubject = (form.elements.namedItem('subject') as HTMLInputElement).value;
         const newBio = (form.elements.namedItem('bio') as HTMLInputElement).value;
         const newPass = (form.elements.namedItem('newPass') as HTMLInputElement).value;
@@ -1024,6 +1128,7 @@ export default function App() {
 
         const updatedProfile = {
             name: newName,
+            displayName: newDisplayName,
             subject: newSubject,
             bio: newBio,
             passwordHash: newHash
@@ -1108,6 +1213,11 @@ export default function App() {
             <div className="min-h-screen bg-slate-100 font-sans pb-10">
                 <div className={`${level.color} text-white p-8 rounded-b-[3rem] shadow-xl relative`}>
                     <button onClick={() => setView('dashboard')} className="absolute top-4 left-4 bg-white/20 px-3 py-1 rounded-full text-xs font-bold hover:bg-white/30 transition-all z-10"><i className="fas fa-arrow-left"></i> Voltar</button>
+                    {student.registrationId && (
+                        <div className="absolute top-4 right-4 bg-white/20 px-3 py-1 rounded-full text-xs font-bold z-10" title="Matrícula">
+                            <i className="fas fa-id-card mr-1"></i> {student.registrationId}
+                        </div>
+                    )}
                     <div className="flex flex-col items-center mt-4">
                         <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center text-5xl text-slate-700 font-bold mb-4 shadow-lg border-4 border-white/30 relative">
                             {student.name.charAt(0)}
@@ -1124,9 +1234,9 @@ export default function App() {
                         </div>
 
                         {student.nickname && (
-                            <h1 className="text-3xl font-black gamified-font mb-1 tracking-wide">{student.nickname}</h1>
+                            <h1 className="text-xl font-black gamified-font mb-1 tracking-wide">{student.nickname}</h1>
                         )}
-                        <h2 className={`${student.nickname ? 'text-sm opacity-80 font-medium' : 'text-2xl font-bold'}`}>{student.name}</h2>
+                        <h2 className={`${student.nickname ? 'text-sm opacity-80 font-medium' : 'text-xl font-bold'}`}>{student.name}</h2>
 
                         <div className="mt-4 flex items-center gap-2">
                             <span className="bg-white/20 px-4 py-1.5 rounded-full text-sm font-bold uppercase tracking-wider flex items-center gap-2">
@@ -1138,7 +1248,7 @@ export default function App() {
                     </div>
                 </div>
 
-                <div className="max-w-md mx-auto px-6 -mt-8 relative z-10 space-y-6">
+                <div className="max-w-2xl mx-auto px-6 -mt-8 relative z-10 space-y-6">
                     <div className="bg-white p-6 rounded-3xl shadow-lg border-2 border-amber-100">
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="text-slate-700 font-bold text-sm uppercase flex items-center gap-2"><i className="fas fa-medal text-amber-500 text-lg"></i> Hall de Medalhas</h3>
@@ -1182,17 +1292,53 @@ export default function App() {
                                     </div>
                                 )}
 
-                                <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex justify-between items-center relative overflow-hidden group">
+                                <div
+                                    className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex justify-between items-center relative overflow-hidden group hover:border-indigo-400 cursor-pointer transition-colors"
+                                    onClick={() => setViewingTransactionId(tx.id)}
+                                >
                                     <div className={`absolute left-0 top-0 bottom-0 w-1 ${tx.amount > 0 ? 'bg-emerald-400' : 'bg-red-400'}`}></div>
                                     <div className="pl-3 flex-1 min-w-0">
-                                        <p className="font-bold text-slate-700 text-sm truncate">
-                                            {tx.type === 'BADGE' ? (
-                                                <span className="flex items-center gap-2 text-amber-600">
-                                                    <i className="fas fa-medal"></i>
-                                                    {data.badgesCatalog.find(b => b.id === tx.description)?.name || 'Nova Medalha'}
-                                                </span>
-                                            ) : tx.description}
-                                        </p>
+                                        <div className="flex items-center justify-between">
+                                            <p className="font-bold text-slate-700 text-sm truncate relative group/title">
+                                                {tx.teacherName && (
+                                                    <span className="absolute left-[-10px] top-1/2 -translate-y-1/2 -translate-x-full opacity-0 group-hover/title:opacity-100 transition-opacity bg-slate-800 text-white text-[10px] py-1 px-2 rounded whitespace-nowrap z-10 pointer-events-none">
+                                                        Lançado por: {tx.teacherName}
+                                                        <span className="absolute top-1/2 -right-1 -translate-y-1/2 border-4 border-transparent border-l-slate-800"></span>
+                                                    </span>
+                                                )}
+                                                {tx.type === 'BADGE' ? (
+                                                    <span className="flex items-center gap-2 text-amber-600">
+                                                        <i className="fas fa-medal"></i>
+                                                        {data.badgesCatalog.find(b => b.id === tx.description)?.name || 'Nova Medalha'}
+                                                    </span>
+                                                ) : tx.description}
+                                            </p>
+                                        </div>
+                                        {/* NOVO: Exibir e editar customDescription */}
+                                        {editingTxDescId === tx.id ? (
+                                            <input
+                                                autoFocus
+                                                type="text"
+                                                className="w-full text-xs p-1 border rounded mt-1 outline-none focus:border-indigo-400 font-medium text-slate-600 bg-slate-50"
+                                                value={editingTxDescValue}
+                                                onChange={e => setEditingTxDescValue(e.target.value)}
+                                                onBlur={() => saveTxDescEdit(tx.id)}
+                                                onKeyDown={e => { if (e.key === 'Enter') saveTxDescEdit(tx.id); if (e.key === 'Escape') setEditingTxDescId(null); }}
+                                                placeholder="Adicione uma descrição..."
+                                            />
+                                        ) : (
+                                            <p
+                                                className="text-xs mt-1 cursor-pointer transition-colors group/desc"
+                                                onClick={(e) => { e.stopPropagation(); setEditingTxDescId(tx.id); setEditingTxDescValue(tx.customDescription || ''); }}
+                                                title="Clique para editar a descrição"
+                                            >
+                                                {tx.customDescription ? (
+                                                    <span className="text-slate-500 font-medium group-hover/desc:text-indigo-600">{tx.customDescription}</span>
+                                                ) : (
+                                                    <span className="text-[10px] italic text-slate-300 font-normal group-hover/desc:text-indigo-400">+ Adicionar Descrição</span>
+                                                )}
+                                            </p>
+                                        )}
                                         <p className="text-[10px] text-slate-400 mt-1 flex items-center gap-2">
                                             <i className="far fa-clock"></i> {new Date(tx.date).toLocaleDateString()}
                                         </p>
@@ -1258,6 +1404,61 @@ export default function App() {
                         ))}
                     </div>
                 </div>
+
+                {viewingTransactionId && (
+                    <GenericModal
+                        title="Detalhes da Transação"
+                        onClose={() => setViewingTransactionId(null)}
+                        onSave={() => setViewingTransactionId(null)}
+                        saveLabel="Fechar"
+                        saveVariant="secondary"
+                    >
+                        {(() => {
+                            const tx = studentTransactions.find(t => t.id === viewingTransactionId);
+                            if (!tx) return <p>Transação não encontrada.</p>;
+                            return (
+                                <div className="space-y-4">
+                                    <div className="flex justify-between items-center border-b border-slate-100 pb-4">
+                                        <span className="text-xs font-bold text-slate-500 uppercase">Data do Registro</span>
+                                        <span className="text-slate-700 font-medium">{new Date(tx.date).toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center border-b border-slate-100 pb-4">
+                                        <span className="text-xs font-bold text-slate-500 uppercase">Tipo</span>
+                                        <span className="text-slate-700 font-medium">{tx.type === 'BADGE' ? 'Medalha' : tx.type === 'TASK' ? 'Tarefa' : 'Penalidade'}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center border-b border-slate-100 pb-4">
+                                        <span className="text-xs font-bold text-slate-500 uppercase">Valor na Carteira</span>
+                                        <span className={`font-black text-lg ${tx.amount > 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                                            {tx.amount > 0 ? '+' : ''}{tx.amount} LXC
+                                        </span>
+                                    </div>
+                                    {tx.teacherName && (
+                                        <div className="flex justify-between items-center border-b border-slate-100 pb-4">
+                                            <span className="text-xs font-bold text-slate-500 uppercase">Assinatura / Autor</span>
+                                            <span className="text-indigo-600 font-bold bg-indigo-50 px-3 py-1 rounded-full text-xs">
+                                                <i className="fas fa-tag mr-1"></i> {tx.teacherName}
+                                            </span>
+                                        </div>
+                                    )}
+                                    <div className="space-y-2 border-b border-slate-100 pb-4">
+                                        <span className="text-xs font-bold text-slate-500 uppercase">Motivo Principal</span>
+                                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-slate-700 font-medium">
+                                            {tx.description}
+                                        </div>
+                                    </div>
+                                    {tx.customDescription && (
+                                        <div className="space-y-2">
+                                            <span className="text-xs font-bold text-slate-500 uppercase">Anotações do Professor</span>
+                                            <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 text-amber-800 text-sm italic">
+                                                "{tx.customDescription}"
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })()}
+                    </GenericModal>
+                )}
             </div>
         );
     }
@@ -1292,7 +1493,7 @@ export default function App() {
                 <div className="p-6 flex justify-between items-center">
                     <div>
                         <h1 className="text-xl font-bold gamified-font text-indigo-400"><i className="fas fa-gamepad mr-2"></i>Mestres da Linguagem</h1>
-                        <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-1">Beta 0.6</p>
+                        <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-1">Beta 0.8</p>
                     </div>
                     <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden text-slate-400 hover:text-white">
                         <i className="fas fa-times"></i>
@@ -1321,29 +1522,11 @@ export default function App() {
 
             <main className="flex-1 h-[calc(100vh-64px)] md:h-screen overflow-y-auto p-4 md:p-8 relative bg-slate-50">
 
-                {/* GLOBAL TOP-RIGHT SAVE BUTTON */}
-                {isAuthenticated && (
-                    <div className="absolute top-4 right-4 md:top-8 md:right-8 z-20">
-                        <button
-                            onClick={handleSyncToCloud}
-                            disabled={isSyncing}
-                            className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 md:px-4 md:py-2 rounded-xl shadow-lg flex items-center gap-2 font-bold text-sm transition-all disabled:opacity-50"
-                            title="Forçar salvamento na nuvem"
-                        >
-                            {isSyncing ? <i className="fas fa-spinner animate-spin"></i> : <i className="fas fa-cloud-upload-alt"></i>}
-                            <span className="hidden sm:inline">{isSyncing ? 'Salvando...' : 'Salvar na Nuvem'}</span>
-                        </button>
-                        {syncMessage && (
-                            <div className="absolute top-12 right-0 bg-emerald-100 text-emerald-800 text-xs font-bold px-3 py-1.5 rounded-lg shadow-md whitespace-nowrap animate-fade-in mt-1 border border-emerald-200">
-                                <i className="fas fa-check-circle mr-1"></i> {syncMessage}
-                            </div>
-                        )}
-                    </div>
-                )}
+                {/* GLOBAL TOP-RIGHT SAVE BUTTON REMOVED FROM HERE, MOVED TO SIDEBAR/HEADER */}
 
                 {view === 'profile' && (
                     <div className="max-w-2xl mx-auto animate-fade-in">
-                        <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-6">Perfil do Professor</h2>
+                        <h2 className="text-lg md:text-xl font-bold text-slate-800 mb-6">Perfil do Professor</h2>
                         <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-slate-200">
                             <form onSubmit={handleProfileUpdate} className="space-y-6">
                                 <div className="flex items-center gap-6 mb-6">
@@ -1357,12 +1540,31 @@ export default function App() {
                                 </div>
 
                                 <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nome de Exibição</label>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nome Completo</label>
                                     <input
                                         name="name"
                                         defaultValue={profile.name}
                                         className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
                                         required
+                                    />
+                                </div>
+
+                                <div>
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <label className="block text-xs font-bold text-slate-500 uppercase">Nome de Exibição / Sigla</label>
+                                        <div className="group relative inline-block text-slate-400 cursor-help">
+                                            <i className="fas fa-info-circle"></i>
+                                            <div className="absolute hidden group-hover:block bottom-full mb-2 left-1/2 -translate-x-1/2 w-48 bg-slate-800 text-white text-[10px] p-2 rounded z-20 shadow-lg text-center normal-case tracking-normal">
+                                                Abreviação (ex "Prof. Rafael") que assinará a distribuição de tarefas na linha do tempo dos alunos.
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <input
+                                        name="displayName"
+                                        maxLength={20}
+                                        defaultValue={profile.displayName || ''}
+                                        placeholder="Ex: Prof. Rafael"
+                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
                                     />
                                 </div>
 
@@ -1409,7 +1611,7 @@ export default function App() {
 
                 {view === 'settings' && (
                     <div className="max-w-2xl mx-auto animate-fade-in">
-                        <h2 className="text-2xl md:text-3xl font-bold text-slate-800 mb-6">Segurança dos Dados</h2>
+                        <h2 className="text-lg md:text-xl font-bold text-slate-800 mb-6">Segurança dos Dados</h2>
                         <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-slate-200 text-center space-y-6">
                             <div className="w-16 h-16 md:w-20 md:h-20 bg-indigo-50 rounded-full flex items-center justify-center mx-auto text-indigo-600 text-3xl mb-4">
                                 <i className="fas fa-database"></i>
@@ -1440,7 +1642,7 @@ export default function App() {
 
                     <div className="max-w-5xl mx-auto animate-fade-in">
                         <div className="flex flex-col md:flex-row justify-between items-center mb-6 md:mb-8 gap-4">
-                            <h2 className="text-2xl md:text-3xl font-bold text-slate-800">Catálogo Global</h2>
+                            <h2 className="text-lg md:text-xl font-bold text-slate-800">Catálogo Global</h2>
                             <div className="flex bg-white rounded-xl p-1 shadow-sm border border-slate-200">
                                 <button onClick={() => setCatalogTab('tasks')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${catalogTab === 'tasks' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:text-indigo-600'}`}>Missões</button>
                                 <button onClick={() => setCatalogTab('badges')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${catalogTab === 'badges' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:text-indigo-600'}`}>Medalhas</button>
@@ -1543,7 +1745,7 @@ export default function App() {
                                                     <div className="flex flex-col gap-2">
                                                         <Button variant="danger" className="py-1 px-3 text-xs" onClick={() => {
                                                             setPenaltySchoolId(data.schools[0]?.id || '');
-                                                            setApplyPenaltyConfig({ isOpen: true, penaltyId: p.id });
+                                                            setApplyPenaltyConfig({ isOpen: true, penaltyId: p.id, amount: p.defaultPoints });
                                                         }}>Aplicar</Button>
                                                         <div className="flex justify-end gap-2">
                                                             <button onClick={() => openModal('penalty', 'edit', p)} className="text-slate-400 hover:text-indigo-600 text-xs"><i className="fas fa-pen"></i></button>
@@ -1564,7 +1766,7 @@ export default function App() {
                     view === 'schools' && (
                         <div className="max-w-4xl mx-auto animate-fade-in">
                             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 md:mb-8 gap-4">
-                                <h2 className="text-2xl md:text-3xl font-bold text-slate-800">Estrutura Escolar</h2>
+                                <h2 className="text-lg md:text-xl font-bold text-slate-800">Estrutura Escolar</h2>
                                 <Button onClick={() => openModal('school', 'create')} className="w-full sm:w-auto">+ Nova Escola</Button>
                             </div>
 
@@ -1635,6 +1837,34 @@ export default function App() {
                                         <button key={b} onClick={() => setCurrentBimester(b as Bimester)} className={`flex-1 md:flex-none px-3 py-1 rounded-md text-xs font-bold transition-all whitespace-nowrap ${currentBimester === b ? 'bg-white shadow text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}>{b}º Bim</button>
                                     ))}
                                 </div>
+
+                                <button
+                                    onClick={async () => {
+                                        setIsSyncing(true);
+                                        setSyncMessage('Salvando na nuvem...');
+                                        try {
+                                            const uid = auth.currentUser?.uid;
+                                            if (uid) {
+                                                await firestoreSyncAll(uid, data, profile);
+                                                setSyncMessage('Salvo com sucesso!');
+                                            } else {
+                                                setSyncMessage('Erro: Não autenticado.');
+                                            }
+                                        } catch (e) {
+                                            console.error(e);
+                                            setSyncMessage('Erro ao salvar.');
+                                        }
+                                        setTimeout(() => {
+                                            setIsSyncing(false);
+                                            setSyncMessage('');
+                                        }, 3000);
+                                    }}
+                                    className="hidden md:flex ml-auto w-10 h-10 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-600 rounded-xl items-center justify-center transition-all shadow-sm"
+                                    title="Salvar na Nuvem"
+                                >
+                                    {isSyncing ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-cloud-upload-alt"></i>}
+                                </button>
+                                {syncMessage && <span className="hidden md:block text-xs font-bold text-indigo-500 animate-fade-in">{syncMessage}</span>}
                             </div>
 
                             {!selectedClassId ? (
@@ -1647,8 +1877,17 @@ export default function App() {
                                     <div className="flex-1 bg-white rounded-3xl border border-slate-200 overflow-hidden flex flex-col shadow-sm min-h-[400px]">
                                         <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                                             <button onClick={() => {
-                                                if (selectedStudentsForTask.length === studentsList.length) setSelectedStudentsForTask([]);
-                                                else setSelectedStudentsForTask(studentsList.map(s => s.id));
+                                                if (selectedStudentsForTask.length === studentsList.length) {
+                                                    setSelectedStudentsForTask([]);
+                                                    setIndividualScores({});
+                                                }
+                                                else {
+                                                    setSelectedStudentsForTask(studentsList.map(s => s.id));
+                                                    const defaultPts = selectedTaskId ? (isGivingBadge ? 0 : data.taskCatalog.find(t => t.id === selectedTaskId)?.defaultPoints ?? manualPoints) : manualPoints;
+                                                    const newScores: Record<string, number> = {};
+                                                    studentsList.forEach(s => newScores[s.id] = defaultPts);
+                                                    setIndividualScores(newScores);
+                                                }
                                             }} className="text-xs font-bold text-indigo-600 hover:underline">
                                                 {selectedStudentsForTask.length === studentsList.length ? 'Desmarcar' : 'Todos'}
                                             </button>
@@ -1671,9 +1910,12 @@ export default function App() {
                                                                 setIndividualScores(newScores);
                                                                 return prev.filter(id => id !== student.id);
                                                             }
+                                                            const defaultPts = selectedTaskId ? (isGivingBadge ? 0 : data.taskCatalog.find(t => t.id === selectedTaskId)?.defaultPoints ?? manualPoints) : manualPoints;
+                                                            setIndividualScores(s => ({ ...s, [student.id]: defaultPts }));
                                                             return [...prev, student.id];
                                                         })}
-                                                        className={`p-3 rounded-xl flex items-center justify-between cursor-pointer border transition-all group ${isSelected ? 'bg-indigo-50 border-indigo-500 shadow-sm' : 'bg-white border-transparent hover:bg-slate-50'}`}
+                                                        className={`p-3 rounded-xl flex items-center justify-between cursor-pointer border-2 transition-all group ${isSelected ? 'bg-indigo-50 border-indigo-500 shadow-sm' : (student.marked ? 'bg-white hover:bg-slate-50' : 'bg-white border-transparent hover:bg-slate-50')}`}
+                                                        style={(!isSelected && student.marked && student.markedColor) ? { borderColor: student.markedColor } : {}}
                                                     >
                                                         <div className="flex items-center gap-3 overflow-hidden">
                                                             <div className={`w-10 h-10 rounded-full ${level.color} flex items-center justify-center text-white font-bold text-sm shadow-sm flex-shrink-0 relative`}>
@@ -1725,7 +1967,7 @@ export default function App() {
                                                                         className="w-5 h-5 bg-white rounded shadow-sm text-slate-400 font-bold hover:text-indigo-600 flex items-center justify-center text-[10px]"
                                                                         onClick={() => {
                                                                             const currentVal = individualScores[student.id] ?? manualPoints;
-                                                                            const newVal = Math.max(-30, currentVal - 1);
+                                                                            const newVal = Math.max(-10, currentVal - 1);
                                                                             setIndividualScores(prev => ({ ...prev, [student.id]: newVal }));
                                                                         }}
                                                                     >-</button>
@@ -1735,9 +1977,9 @@ export default function App() {
                                                                             }`}
                                                                         value={individualScores[student.id] ?? manualPoints}
                                                                         onChange={(e) => {
-                                                                            let val = Number(e.target.value);
+                                                                            let val = parseInt(e.target.value) || 0;
                                                                             if (val > 250) val = 250;
-                                                                            if (val < -30) val = -30;
+                                                                            if (val < -10) val = -10;
                                                                             setIndividualScores(prev => ({ ...prev, [student.id]: val }));
                                                                         }}
                                                                     />
@@ -1754,6 +1996,19 @@ export default function App() {
                                                                 <span className="font-mono font-bold text-slate-600">{student.lxcTotal[currentBimester] || 0}</span>
                                                             )}
 
+                                                            {pendingDeleteStudentId === student.id && (
+                                                                <button
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        requestDelete(e, 'student', student.id, undefined, student.name);
+                                                                        setPendingDeleteStudentId(null);
+                                                                    }}
+                                                                    className="text-red-400 hover:text-red-600 px-2 animate-bounce"
+                                                                    title="Confirmar Exclusão Definitiva"
+                                                                >
+                                                                    <i className="fas fa-trash-alt"></i>
+                                                                </button>
+                                                            )}
                                                             <button
                                                                 onClick={(e) => { e.stopPropagation(); openStudentSettings(student); }}
                                                                 className="text-slate-300 hover:text-indigo-500 px-2"
@@ -1793,11 +2048,31 @@ export default function App() {
 
                                         {!isGivingBadge && !selectedTaskId && (
                                             <div className="animate-fade-in space-y-4">
-                                                <Input placeholder="Título / Motivo (ex: Ajudou colega)" value={manualDesc} onChange={(e: any) => setManualDesc(e.target.value)} />
-                                                <div className="flex items-center gap-2">
-                                                    <button onClick={() => setManualPoints(p => p - 5)} className="w-10 h-10 bg-slate-100 rounded-lg font-bold hover:bg-slate-200 touch-manipulation">-</button>
-                                                    <input type="number" className="flex-1 text-center font-bold text-xl py-2 border-b-2 border-indigo-100 outline-none bg-transparent" value={manualPoints} onChange={e => setManualPoints(Number(e.target.value))} />
-                                                    <button onClick={() => setManualPoints(p => p + 5)} className="w-10 h-10 bg-slate-100 rounded-lg font-bold hover:bg-slate-200 touch-manipulation">+</button>
+                                                <Input
+                                                    placeholder="Título / Motivo (ex: Ajudou colega)"
+                                                    value={manualDesc}
+                                                    onFocus={(e: any) => {
+                                                        if (!manualDesc) {
+                                                            setManualDesc(`Missão diária de ${profile?.subject || 'Linguagens'}`);
+                                                        }
+                                                        setTimeout(() => e.target.select(), 10);
+                                                    }}
+                                                    onChange={(e: any) => setManualDesc(e.target.value)}
+                                                />
+                                                <Input
+                                                    placeholder="Descrição (opcional)"
+                                                    value={customMissionDesc}
+                                                    onChange={(e: any) => setCustomMissionDesc(e.target.value)}
+                                                />
+                                                <div className="flex items-center gap-2 justify-center mt-2">
+                                                    <button onClick={() => setManualPoints(p => Math.max(-5, p - 5))} className="w-8 h-8 md:w-10 md:h-10 bg-slate-100 rounded-lg font-bold hover:bg-slate-200 touch-manipulation text-slate-600">-</button>
+                                                    <input type="number" className="w-16 md:w-20 text-center font-bold text-lg md:text-xl py-1 border-b-2 border-indigo-100 outline-none bg-transparent" value={manualPoints} onChange={e => {
+                                                        let val = parseInt(e.target.value) || 0;
+                                                        if (val < -5) val = -5;
+                                                        if (val > 30) val = 30;
+                                                        setManualPoints(val);
+                                                    }} />
+                                                    <button onClick={() => setManualPoints(p => Math.min(30, p + 5))} className="w-8 h-8 md:w-10 md:h-10 bg-slate-100 rounded-lg font-bold hover:bg-slate-200 touch-manipulation text-slate-600">+</button>
                                                 </div>
                                             </div>
                                         )}
@@ -1819,30 +2094,15 @@ export default function App() {
                 }
             </main >
 
-            {modalConfig.type === 'mission-selector' && (
-                <div className="fixed inset-0 bg-slate-900/60 flex items-end md:items-center justify-center z-50 backdrop-blur-sm p-0 md:p-4 animate-fade-in" onClick={(e) => e.stopPropagation()}>
+            {modalConfig.isOpen && modalConfig.type === 'mission-selector' && (
+                <div className="fixed inset-0 bg-slate-900/60 flex items-end md:items-center justify-center z-50 backdrop-blur-sm p-0 md:p-4 animate-fade-in" onClick={e => e.stopPropagation()}>
                     <div className="bg-white rounded-t-2xl md:rounded-2xl p-6 w-full md:max-w-md shadow-2xl h-[80vh] flex flex-col">
                         <div className="flex justify-between items-center mb-4 flex-shrink-0">
                             <h3 className="text-xl font-bold text-slate-800">{isGivingBadge ? 'Selecionar Medalha' : 'Selecionar Atividade'}</h3>
                             <button onClick={closeModal} className="w-8 h-8 flex items-center justify-center bg-slate-100 rounded-full text-slate-400 hover:text-red-500 transition-colors"><i className="fas fa-times text-lg"></i></button>
                         </div>
 
-                        {!isGivingBadge && (
-                            <div className="flex p-1 bg-slate-100 rounded-lg mb-4 flex-shrink-0">
-                                <button
-                                    className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${missionModalTab === 'missions' ? 'bg-white shadow text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}
-                                    onClick={() => setMissionModalTab('missions')}
-                                >
-                                    <i className="fas fa-tasks mr-2"></i>Missões
-                                </button>
-                                <button
-                                    className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${missionModalTab === 'penalties' ? 'bg-white shadow text-red-500' : 'text-slate-400 hover:text-slate-600'}`}
-                                    onClick={() => setMissionModalTab('penalties')}
-                                >
-                                    <i className="fas fa-exclamation-circle mr-2"></i>Penalidades
-                                </button>
-                            </div>
-                        )}
+                        {/* Tabs removidas a pedido do usuário, apenas missões */}
 
                         <div className="mb-4 flex-shrink-0">
                             <div className="relative">
@@ -1852,9 +2112,8 @@ export default function App() {
                                     className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-3 outline-none focus:border-indigo-500 font-bold text-slate-600"
                                     placeholder="Buscar..."
                                     autoFocus
-                                    onChange={(e) => {
-                                        // Placeholder for search logic
-                                    }}
+                                    onChange={(e) => setMissionSearch(e.target.value)}
+                                    value={missionSearch}
                                 />
                             </div>
                         </div>
@@ -1864,8 +2123,10 @@ export default function App() {
                                 onClick={() => {
                                     setSelectedTaskId('');
                                     setManualDesc('');
-                                    setManualPoints(missionModalTab === 'penalties' ? -5 : 10);
+                                    setCustomMissionDesc('');
+                                    setManualPoints(missionModalTab === 'penalties' ? -5 : 0);
                                     closeModal();
+                                    openModal(isGivingBadge ? 'badge' : 'task', 'create');
                                 }}
                                 className={`w-full p-4 rounded-xl border-2 border-dashed font-bold transition-all flex items-center gap-3 ${missionModalTab === 'penalties' ? 'border-red-200 text-red-400 hover:border-red-500 hover:text-red-600' : 'border-slate-300 text-slate-500 hover:border-indigo-500 hover:text-indigo-600'}`}
                             >
@@ -1879,15 +2140,18 @@ export default function App() {
                             </button>
 
                             {!isGivingBadge ? (
-                                missionModalTab === 'missions' ? (
-                                    data.taskCatalog.filter(t => t.bimesters.includes(currentBimester)).map(task => (
+                                data.taskCatalog
+                                    .filter(t => t.bimesters.includes(currentBimester) && t.title.toLowerCase().includes(missionSearch.toLowerCase()))
+                                    .map(task => (
                                         <button
                                             key={task.id}
                                             onClick={() => {
                                                 setSelectedTaskId(task.id);
                                                 setManualDesc(task.title);
+                                                setCustomMissionDesc(task.description);
                                                 setManualPoints(task.defaultPoints);
                                                 closeModal();
+                                                setMissionSearch('');
                                             }}
                                             className="w-full p-4 rounded-xl border border-slate-100 hover:border-indigo-500 hover:bg-indigo-50 transition-all flex items-center justify-between group text-left"
                                         >
@@ -1898,33 +2162,15 @@ export default function App() {
                                             <div className="font-bold text-indigo-600 bg-indigo-100 px-2 py-1 rounded text-xs">{task.defaultPoints} pts</div>
                                         </button>
                                     ))
-                                ) : (
-                                    data.penaltiesCatalog.filter(p => p.bimesters.includes(currentBimester)).map(penalty => (
-                                        <button
-                                            key={penalty.id}
-                                            onClick={() => {
-                                                setSelectedTaskId(penalty.id);
-                                                setManualDesc(penalty.title);
-                                                setManualPoints(penalty.defaultPoints);
-                                                closeModal();
-                                            }}
-                                            className="w-full p-4 rounded-xl border border-slate-100 hover:border-red-500 hover:bg-red-50 transition-all flex items-center justify-between group text-left"
-                                        >
-                                            <div>
-                                                <h4 className="font-bold text-slate-700 group-hover:text-red-700">{penalty.title}</h4>
-                                                <p className="text-xs text-slate-400 line-clamp-1">{penalty.description}</p>
-                                            </div>
-                                            <div className="font-bold text-red-600 bg-red-100 px-2 py-1 rounded text-xs">{penalty.defaultPoints} pts</div>
-                                        </button>
-                                    ))
-                                )
                             ) : (
-                                data.badgesCatalog.filter(b => b.bimesters.includes(currentBimester)).map(badge => (
+                                data.badgesCatalog.filter(b => b.bimesters.includes(currentBimester) && b.name.toLowerCase().includes(missionSearch.toLowerCase())).map(badge => (
                                     <button
                                         key={badge.id}
                                         onClick={() => {
                                             setSelectedTaskId(badge.id);
+                                            setCustomMissionDesc(badge.description);
                                             closeModal();
+                                            setMissionSearch('');
                                         }}
                                         className="w-full p-4 rounded-xl border border-slate-100 hover:border-amber-500 hover:bg-amber-50 transition-all flex items-center gap-3 group text-left"
                                     >
@@ -2063,15 +2309,15 @@ export default function App() {
             {studentSettingsConfig.isOpen && (
                 <GenericModal
                     title="Configurações do Aluno"
-                    onClose={() => setStudentSettingsConfig({ ...studentSettingsConfig, isOpen: false })}
-                    onSave={() => handleStudentSettingsSave({
-                        name: studentSettingsConfig.initialName,
-                        registrationId: studentSettingsConfig.initialRegId,
-                        marked: data.schools.find(s => s.classes?.some(c => c.students?.some(st => st.id === studentSettingsConfig.studentId)))?.classes?.find(c => c.students?.some(st => st.id === studentSettingsConfig.studentId))?.students?.find(st => st.id === studentSettingsConfig.studentId)?.marked,
-                        markedColor: data.schools.find(s => s.classes?.some(c => c.students?.some(st => st.id === studentSettingsConfig.studentId)))?.classes?.find(c => c.students?.some(st => st.id === studentSettingsConfig.studentId))?.students?.find(st => st.id === studentSettingsConfig.studentId)?.markedColor,
-                        markedLabel: data.schools.find(s => s.classes?.some(c => c.students?.some(st => st.id === studentSettingsConfig.studentId)))?.classes?.find(c => c.students?.some(st => st.id === studentSettingsConfig.studentId))?.students?.find(st => st.id === studentSettingsConfig.studentId)?.markedLabel
-                    })}
-                    saveLabel="Salvar Alterações"
+                    onClose={revertStudentSettings}
+                    onSave={() => {
+                        handleStudentSettingsSave({
+                            name: studentSettingsConfig.initialName,
+                            registrationId: studentSettingsConfig.initialRegId
+                        });
+                        setStudentSettingsConfig({ ...studentSettingsConfig, isOpen: false });
+                    }}
+                    saveLabel="Ok"
                 >
                     <div className="flex gap-2 mb-4 border-b border-slate-100">
                         <button
@@ -2107,7 +2353,9 @@ export default function App() {
                                     />
                                     <button
                                         onClick={() => {
-                                            const formatted = (studentSettingsConfig.initialName || '').toLowerCase().replace(/(?:^|\s)\S/g, function (a) { return a.toUpperCase(); });
+                                            const formatted = (studentSettingsConfig.initialName || '').toLowerCase()
+                                                .replace(/(?:^|\s)\S/g, a => a.toUpperCase())
+                                                .replace(/\b(De|Da|Do|Das|Dos|E)\b/gi, match => match.toLowerCase());
                                             setStudentSettingsConfig({ ...studentSettingsConfig, initialName: formatted });
                                         }}
                                         className="px-3 bg-slate-100 text-slate-500 rounded-xl hover:bg-indigo-50 hover:text-indigo-600 font-bold"
@@ -2133,7 +2381,7 @@ export default function App() {
                     {studentSettingsConfig.tab === 'mark' && (() => {
                         // Find student current data for controlled inputs in "mark" tab
                         // Since we are editing directly in the change handler for simplicity in this constrained environment
-                        const student = getAllStudents(data).find(s => s.id === studentSettingsConfig.studentId);
+                        const student = getAllStudents(data.schools).find(s => s.id === studentSettingsConfig.studentId);
                         if (!student) return null;
 
                         return (
@@ -2188,14 +2436,14 @@ export default function App() {
                                 Deseja realmente excluir este aluno? Esta ação abrirá a confirmação final.
                             </p>
                             <Button
+                                className="w-full"
                                 variant="danger"
                                 onClick={(e: any) => {
                                     setStudentSettingsConfig({ ...studentSettingsConfig, isOpen: false });
-                                    const student = getAllStudents(data).find(s => s.id === studentSettingsConfig.studentId);
-                                    if (student) requestDelete(e, 'student', student.id, undefined, student.name);
+                                    setPendingDeleteStudentId(studentSettingsConfig.studentId);
                                 }}
                             >
-                                Continuar para Exclusão
+                                Confirmar Intenção de Exclusão
                             </Button>
                         </div>
                     )}
@@ -2216,15 +2464,31 @@ export default function App() {
                 applyPenaltyConfig.isOpen && (
                     <GenericModal
                         title="Aplicar Penalidade"
-                        onClose={() => setApplyPenaltyConfig({ isOpen: false, penaltyId: null })}
+                        onClose={() => setApplyPenaltyConfig({ isOpen: false, penaltyId: null, amount: 0 })}
                         onSave={applyPenalty}
                         saveLabel="Aplicar Penalidade"
                         saveVariant="danger"
                     >
                         <div className="space-y-4">
-                            <div className="bg-red-50 border border-red-100 p-4 rounded-xl">
-                                <h4 className="font-bold text-red-800">{data.penaltiesCatalog.find(p => p.id === applyPenaltyConfig.penaltyId)?.title}</h4>
-                                <p className="text-sm text-red-600 mt-1">{data.penaltiesCatalog.find(p => p.id === applyPenaltyConfig.penaltyId)?.description}</p>
+                            <div className="bg-red-50 border border-red-100 p-4 rounded-xl flex justify-between items-center">
+                                <div>
+                                    <h4 className="font-bold text-red-800">{data.penaltiesCatalog.find(p => p.id === applyPenaltyConfig.penaltyId)?.title}</h4>
+                                    <p className="text-sm text-red-600 mt-1">{data.penaltiesCatalog.find(p => p.id === applyPenaltyConfig.penaltyId)?.description}</p>
+                                </div>
+                                <div className="flex flex-col items-center ml-4">
+                                    <label className="text-[10px] font-bold text-red-700 uppercase mb-1">Impacto (LXC)</label>
+                                    <input
+                                        type="number"
+                                        className="w-20 text-center font-bold text-lg py-1 border-b-2 border-red-300 outline-none bg-transparent text-red-600"
+                                        value={applyPenaltyConfig.amount}
+                                        onChange={e => {
+                                            let val = parseInt(e.target.value) || 0;
+                                            if (val < -30) val = -30;
+                                            if (val > -1) val = -1;
+                                            setApplyPenaltyConfig(prev => ({ ...prev, amount: val }));
+                                        }}
+                                    />
+                                </div>
                             </div>
 
                             <div className="flex gap-2">
