@@ -3,7 +3,20 @@ import React, { useState, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { Bimester, Student, School, ClassGroup, Transaction, TaskDefinition, Badge, LevelRule, TeacherProfileData, PenaltyDefinition } from './types';
 import { getLevel, getNextLevel } from './utils/gamificationRules';
-import { loadData, saveData, AppData, addTransaction, getAllStudents, exportDataToJSON, importDataFromJSON, removeTransaction, updateTransactionAmount, loadProfile, saveProfile } from './services/localStorageService';
+import {
+    loadData,
+    saveData,
+    AppData,
+    addTransaction,
+    getAllStudents,
+    exportDataToJSON,
+    importDataFromJSON,
+    removeTransaction,
+    updateTransactionAmount,
+    loadProfile,
+    saveProfile,
+    generateClassSeed
+} from './services/localStorageService';
 import { loginWithEmail, loginWithGoogle, logout, subscribeToAuthChanges, registerWithEmail } from './services/auth';
 import {
     fetchTeacherData,
@@ -67,15 +80,6 @@ const obscurePassword = (pass: string): string => {
     } catch (e) {
         return "";
     }
-};
-
-const generateClassSeed = () => {
-    const chars = 'ABCDEFGHIJKLMNPQRSTUVWXYZ0123456789'; // Excluding 'O'
-    let seed = '';
-    for (let i = 0; i < 12; i++) {
-        seed += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return seed;
 };
 
 // --- COMPONENTES UI ---

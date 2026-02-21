@@ -1,5 +1,5 @@
 
-import { School, Student, Transaction, TaskDefinition, Badge, TeacherProfileData, PenaltyDefinition } from '../types';
+import { School, Student, Transaction, TaskDefinition, Badge, TeacherProfileData, PenaltyDefinition, ClassGroup } from '../types';
 
 const DB_KEY = 'mestres_linguagem_v2';
 const PROFILE_KEY = 'mestres_teacher_profile';
@@ -7,6 +7,15 @@ const PROFILE_KEY = 'mestres_teacher_profile';
 // Hash Base64 padrão para "Swf123swf"
 // btoa("Swf123swf") = "U3dmMTIzc3dm"
 const DEFAULT_PASS_HASH = "U3dmMTIzc3dm";
+
+export const generateClassSeed = () => {
+  const chars = 'ABCDEFGHIJKLMNPQRSTUVWXYZ0123456789'; // Excluding 'O'
+  let seed = '';
+  for (let i = 0; i < 12; i++) {
+    seed += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return seed;
+};
 
 export interface AppData {
   schools: School[];
@@ -149,6 +158,17 @@ export const importDataFromJSON = (jsonContent: string): boolean => {
     if (parsed._profileBackup) {
       saveProfile(parsed._profileBackup);
       delete parsed._profileBackup;
+    }
+
+    // Garante que todas as turmas tenham uma seed (código de convite)
+    if (parsed.schools) {
+      parsed.schools.forEach((school: School) => {
+        school.classes?.forEach((cls: ClassGroup) => {
+          if (!cls.seed || cls.seed === 'MIGRE_SALA') {
+            cls.seed = generateClassSeed();
+          }
+        });
+      });
     }
 
     saveData(parsed);
