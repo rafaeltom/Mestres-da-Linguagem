@@ -44,6 +44,21 @@
       }
     }
 
+    @keyframes bounceIn {
+      from {
+        opacity: 0;
+        transform: translateX(-50%) translateY(-20px) scale(0.9);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0) scale(1);
+      }
+    }
+
+    .animate-bounce-in {
+      animation: bounceIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    }
+
     ::-webkit-scrollbar {
       width: 8px;
     }

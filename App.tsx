@@ -336,7 +336,7 @@ const LoginScreen = ({ onLogin }: { onLogin: (e: string, p: string) => Promise<b
 
                 <p className="text-[10px] text-center text-slate-400 mt-6 flex flex-col items-center gap-1">
                     <span>&copy; 2026 Projeto Mestres da Linguagem</span>
-                    <span className="uppercase tracking-widest font-bold text-indigo-400/50">Beta 0.8</span>
+                    <span className="uppercase tracking-widest font-bold text-indigo-400/50">Beta 0.9</span>
                 </p>
             </div>
         </div>
@@ -499,24 +499,37 @@ export default function App() {
 
                 // Firestore Load
                 try {
+                    console.log("[Auth] User logged in, fetching cloud data...", user.uid);
                     const cloudData = await fetchTeacherData(user.uid);
-                    // If cloud data is empty, we might want to keep local data?
-                    // For now, let's assume cloud is authority if logged in.
-                    // But if it's the first time, cloud is empty.
-                    // Logic: If cloud is empty AND local has data, ask to sync? 
-                    // Or just set data.
-                    // Simplest: Set data. If empty, user starts fresh or imports.
-                    // Ideally: Check if cloud has schools. If not, create defaults?
-                    setData(cloudData);
+                    const cloudHasData = cloudData.schools.length > 0 || cloudData.taskCatalog.length > 0;
+
+                    if (cloudHasData) {
+                        console.log("[Auth] Cloud data found, updating local state.");
+                        setData(cloudData);
+                        saveData(cloudData);
+                        showToast("Dados carregados da nuvem.", "success");
+                    } else if (data.schools.length > 0) {
+                        console.log("[Auth] Cloud is empty but local has data. Syncing up...");
+                        showToast("Sincronizando dados locais com sua nova conta...", "info");
+                        await firestoreSyncAll(user.uid, data, profile);
+                        showToast("Dados salvos na nuvem!", "success");
+                    } else {
+                        console.log("[Auth] Both cloud and local are empty. Fresh start.");
+                        setData(cloudData);
+                    }
 
                     // Profile
                     const cloudProfile = await getTeacherProfile(user.uid);
-                    if (cloudProfile) setProfile(cloudProfile);
-                    else await saveTeacherProfile(user.uid, profile);
+                    if (cloudProfile) {
+                        setProfile(cloudProfile);
+                        saveProfile(cloudProfile);
+                    } else {
+                        await saveTeacherProfile(user.uid, profile);
+                    }
 
                 } catch (err) {
-                    console.error("Erro ao carregar do Firestore:", err);
-                    alert("Erro ao carregar dados da nuvem. Verifique sua conexão.");
+                    console.error("[Auth] Erro ao carregar do Firestore:", err);
+                    showToast("Erro ao carregar dados da nuvem. Verifique sua conexão.", "error");
                 }
 
             } else {
@@ -530,6 +543,28 @@ export default function App() {
         });
         return () => unsubscribe();
     }, []);
+
+    // --- NOTIFICATION STATE ---
+    const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'info'; isOpen: boolean }>({ message: '', type: 'info', isOpen: false });
+
+    const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+        setNotification({ message, type, isOpen: true });
+    };
+
+    useEffect(() => {
+        if (notification.isOpen) {
+            const timer = setTimeout(() => {
+                setNotification(prev => ({ ...prev, isOpen: false }));
+            }, 5000);
+            return () => clearTimeout(timer);
+        }
+    }, [notification.isOpen]);
+
+    // Selection Reset Logic
+    useEffect(() => {
+        setSelectedStudentsForTask([]);
+        setIndividualScores({});
+    }, [selectedSchoolId, selectedClassId]);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -671,7 +706,7 @@ export default function App() {
             setEditingTransactionId(null);
             setEditingTransactionValue('');
         } else {
-            alert("Valor inválido.");
+            showToast("Valor inválido.", "error");
         }
     };
 
@@ -837,8 +872,8 @@ export default function App() {
         const { type, mode, editingId } = modalConfig;
         const { name, description, points, icon, bimesters, imageUrl, rewardValue } = formData;
 
-        if (!name.trim()) return alert("O nome é obrigatório.");
-        if ((type === 'task' || type === 'badge') && bimesters.length === 0) return alert("Selecione pelo menos um bimestre.");
+        if (!name.trim()) return showToast("O nome é obrigatório.", "error");
+        if ((type === 'task' || type === 'badge') && bimesters.length === 0) return showToast("Selecione pelo menos um bimestre.", "info");
 
         const newData = JSON.parse(JSON.stringify(data));
         const uid = auth.currentUser?.uid;
@@ -984,46 +1019,61 @@ export default function App() {
         setData(newData);
         saveData(newData);
         setDeleteConfig({ isOpen: false, type: null, id: null });
+        showToast("Item excluído com sucesso!", "success");
     };
 
     // --- IMPORT SYSTEM ---
 
-    const batchImportStudents = (text: string) => {
-        if (!selectedSchoolId || !selectedClassId) return;
-        const names = text.split('\n').map(n => n.trim()).filter(n => n.length > 0);
+    const batchImportStudents = async (studentNames: string[]) => {
+        if (!selectedSchoolId || !selectedClassId) return showToast("Selecione escola e turma.", "error");
 
-        const newData = JSON.parse(JSON.stringify(data));
-        const school = newData.schools.find((s: School) => s.id === selectedSchoolId);
-        const cls = school?.classes.find((c: ClassGroup) => c.id === selectedClassId);
+        let currentData = JSON.parse(JSON.stringify(data));
+        const school = currentData.schools.find((s: School) => s.id === selectedSchoolId);
+        const cls = school?.classes?.find((c: ClassGroup) => c.id === selectedClassId);
+        if (!cls) return;
 
-        if (cls) {
-            const newStudents = names.map((name: string) => ({
-                id: uuidv4(),
-                name,
-                schoolId: selectedSchoolId,
-                classId: selectedClassId,
-                avatarId: 'default',
-                lxcTotal: { 1: 0, 2: 0, 3: 0, 4: 0 },
-                badges: [],
-            }));
-            cls.students = [...(cls.students || []), ...newStudents];
-            setData(newData);
-            saveData(newData);
+        const newStudents: Student[] = studentNames.map(name => ({
+            id: uuidv4(),
+            name: name.trim(),
+            schoolId: selectedSchoolId,
+            classId: selectedClassId,
+            avatarId: 'default',
+            lxcTotal: { 1: 0, 2: 0, 3: 0, 4: 0 },
+            badges: []
+        }));
+
+        cls.students = [...(cls.students || []), ...newStudents];
+        setData(currentData);
+        saveData(currentData);
+
+        const uid = auth.currentUser?.uid;
+        if (uid) {
+            for (const s of newStudents) {
+                await firestoreAddStudent(uid, s);
+            }
         }
+
+        showToast(`${newStudents.length} alunos importados!`, "success");
         setShowBatchImport(false);
     };
 
     // --- REWARD SYSTEM ---
 
     const giveRewards = async () => {
-        if (selectedStudentsForTask.length === 0) return alert("Selecione alunos.");
+        if (selectedStudentsForTask.length === 0) {
+            showToast("Selecione ao menos um aluno para pontuar.", "info");
+            return;
+        }
 
         let currentData = JSON.parse(JSON.stringify(data));
         const uid = auth.currentUser?.uid;
         const txPromises: Promise<void>[] = [];
 
         if (isGivingBadge) {
-            if (!selectedTaskId) return alert("Selecione uma medalha.");
+            if (!selectedTaskId) {
+                showToast("Selecione uma medalha no catálogo.", "info");
+                return;
+            }
             const badge = data.badgesCatalog.find(b => b.id === selectedTaskId);
             if (!badge) return;
 
@@ -1033,20 +1083,14 @@ export default function App() {
                     studentId: sid,
                     type: 'BADGE',
                     amount: badge.rewardValue || 0,
-                    description: badge.name, // Use name instead of ID for description
+                    description: manualDesc || badge.name, // Use edited name or original
                     customDescription: customMissionDesc || badge.description,
                     bimester: currentBimester,
-                    date: new Date()
+                    date: new Date(),
+                    teacherName: profile.name
                 };
 
-                // Update Local Data (Optimistic)
-                // We need to implement addTransaction locally logic effectively
-                // But wait, addTransaction helper in localStorageService might be useful but we are operating on currentData object
-                // Let's replicate simple logic here or import helper
-                // For now, manual update on currentData
                 currentData.transactions.push(tx);
-                // Also update student total? Badges usually don't give points in this system? 
-                // Wait, badge.rewardValue exists.
                 if (badge.rewardValue) {
                     const school = currentData.schools.find((s: School) => s.classes?.some((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid)));
                     const cls = school?.classes?.find((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid));
@@ -1061,56 +1105,29 @@ export default function App() {
         } else {
             // Task or Penalty
             for (const sid of selectedStudentsForTask) {
-                let points = manualPoints;
+                let points = individualScores[sid] !== undefined ? individualScores[sid] : manualPoints;
                 let desc = manualDesc;
-                let isPenalty = false;
-
-                const penalty = data.penaltiesCatalog.find(p => p.id === selectedTaskId);
-                const task = data.taskCatalog.find(t => t.id === selectedTaskId);
-
-                if (penalty) {
-                    points = penalty.defaultPoints;
-                    desc = penalty.title;
-                    isPenalty = true;
-                } else if (task) {
-                    points = task.defaultPoints;
-                    desc = task.title;
-                    isPenalty = false;
-                } else {
-                    // Custom
-                    // Logic handled below
-                }
-
-                // If custom manual points/desc
-                if (!selectedTaskId) {
-                    // points and desc are already set from state
-                }
-
-                if (individualScores[sid] !== undefined) {
-                    points = individualScores[sid];
-                }
+                const finalCustomDesc = customMissionDesc;
 
                 // Final check on type
                 let type: 'TASK' | 'PENALTY' | 'BONUS' = points < 0 ? 'PENALTY' : 'TASK';
-                if (!desc) desc = type === 'PENALTY' ? "Penalidade" : "Atividade";
-                if (!selectedTaskId && (!desc || !desc.trim())) {
-                    alert("Você precisa informar um Título / Motivo para a missão personalizada.");
-                    return; // Prevent further execution
+                if (!desc || !desc.trim()) {
+                    showToast("Você precisa informar um Título / Motivo para a missão.", "error");
+                    return;
                 }
 
                 const tx: Transaction = {
                     id: uuidv4(),
                     studentId: sid,
-                    type: type,
+                    type,
                     amount: points,
                     description: desc,
-                    customDescription: customMissionDesc || (task ? task.description : penalty ? penalty.description : ''),
+                    customDescription: finalCustomDesc,
                     bimester: currentBimester,
                     date: new Date(),
-                    ...(type === 'TASK' ? { teacherName: profile?.displayName || profile?.name?.split(' ')[0] || 'Professor' } : {})
+                    teacherName: profile.name
                 };
 
-                // Update Local Data (Optimistic)
                 currentData.transactions.push(tx);
                 const school = currentData.schools.find((s: School) => s.classes?.some((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid)));
                 const cls = school?.classes?.find((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid));
@@ -1179,7 +1196,7 @@ export default function App() {
         setManualPoints(10);
         setIsGivingBadge(false);
         setSelectedTaskId('');
-        alert("Salvo com sucesso!");
+        showToast("Salvo com sucesso!", "success");
     };
 
     // --- BACKUP ---
@@ -1196,11 +1213,11 @@ export default function App() {
         const reader = new FileReader();
         reader.onload = (ev) => {
             if (importDataFromJSON(ev.target?.result as string)) {
-                alert("Dados restaurados com sucesso! Não se esqueça de Salvar na Nuvem.");
+                showToast("Backup restaurado!", "success");
                 setData(loadData());
                 setProfile(loadProfile()); // Refresh profile if it was imported
             } else {
-                alert("Arquivo inválido.");
+                showToast("Arquivo inválido.", "error");
             }
         };
         reader.readAsText(file);
@@ -1208,8 +1225,8 @@ export default function App() {
 
     // --- PENALTY APPLICATION SYSTEM ---
     const applyPenalty = async () => {
-        if (!applyPenaltyConfig.penaltyId || penaltyStudents.length === 0) return alert("Selecione alunos e uma penalidade.");
-        if (applyPenaltyConfig.amount > -1 || applyPenaltyConfig.amount < -30) return alert("Penalidade inválida (-30 a -1).");
+        if (!applyPenaltyConfig.penaltyId || penaltyStudents.length === 0) return showToast("Selecione alunos e uma penalidade.", "info");
+        if (applyPenaltyConfig.amount > -1 || applyPenaltyConfig.amount < -30) return showToast("Penalidade inválida (-30 a -1).", "error");
         const uid = auth.currentUser?.uid;
 
         const penalty = data.penaltiesCatalog.find(p => p.id === applyPenaltyConfig.penaltyId);
@@ -1248,7 +1265,7 @@ export default function App() {
 
         Promise.all(txPromises).catch(err => console.error("Erro ao aplicar penalidades no Firestore:", err));
 
-        alert(`${appliedCount} penalidade(s) aplicada(s).`);
+        showToast(`${appliedCount} penalidade(s) aplicada(s).`, "success");
         setApplyPenaltyConfig({ isOpen: false, penaltyId: null, amount: 0 });
         setPenaltyStudents([]);
     };
@@ -1277,12 +1294,15 @@ export default function App() {
         }
 
         if (!studentToMove) {
-            alert("Aluno não encontrado na base atual.");
+            showToast("Aluno não encontrado na base atual.", "error");
             return;
         }
 
-        if (sourceSchoolId === targetSchoolId && sourceClassId === targetClassId) {
-            alert("O aluno já está nesta turma.");
+        const targetSchool = data.schools.find(s => s.id === targetSchoolId);
+        const destClass = targetSchool?.classes?.find(c => c.id === targetClassId);
+
+        if (destClass?.students?.some((st: Student) => st.id === studentId)) {
+            showToast("O aluno já está nesta turma.", "info");
             return;
         }
 
@@ -1317,13 +1337,13 @@ export default function App() {
                 await firestoreUpdateStudent(studentToMove);
             } catch (err) {
                 console.error("Error during transfer sync: ", err);
-                alert("Erro ao salvar transferência na nuvem. A alteração foi salva localmente.");
+                showToast("Alteração salva localmente. Verifique sincronização em nuvem.", "info");
             }
         }
 
         setStudentSettingsConfig({ isOpen: false, studentId: null, tab: 'transfer' });
         setTransferConfig({ targetSchoolId: '', targetClassId: '' });
-        alert('Aluno transferido com sucesso!');
+        showToast('Aluno transferido com sucesso!', "success");
     };
 
     // --- PROFILE LOGIC ---
@@ -1346,7 +1366,7 @@ export default function App() {
 
             if (newPass || currentPass || confirmPass) {
                 if (!currentPass) {
-                    return alert("Digite a Senha Atual para poder alterá-la.");
+                    return showToast("Digite a Senha Atual para poder alterá-la.", "info");
                 }
 
                 // Verify current password
@@ -1356,15 +1376,15 @@ export default function App() {
                     (profile.passwordHash && profile.passwordHash !== MASTER_PASS_ENCODED && currentHashInput === profile.passwordHash);
 
                 if (!isCurrentPassValid) {
-                    return alert("A Senha Atual informada está incorreta.");
+                    return showToast("A Senha Atual informada está incorreta.", "error");
                 }
 
                 if (newPass !== confirmPass) {
-                    return alert("A Nova Senha e a Confirmação não coincidem.");
+                    return showToast("A Nova Senha e a Confirmação não coincidem.", "error");
                 }
 
                 if (newPass.length < 6) {
-                    return alert("A Nova Senha deve ter pelo menos 6 caracteres.");
+                    return showToast("A Nova Senha deve ter pelo menos 6 caracteres.", "error");
                 }
 
                 newHash = obscurePassword(newPass);
@@ -1377,18 +1397,11 @@ export default function App() {
         const confirmPin = (form.elements.namedItem('confirmPin') as HTMLInputElement)?.value;
 
         if (newPin || currentPin || confirmPin) {
-            if (!currentPin) {
-                return alert("Digite o PIN atual para alterá-lo.");
-            }
-            const actualPin = profile.pin || "0000";
-            if (currentPin !== actualPin) {
-                return alert("PIN Atual incorreto.");
-            }
-            if (newPin !== confirmPin) {
-                return alert("O Novo PIN e a confirmação não coincidem.");
-            }
+            if (!currentPin) return showToast("Digite o PIN atual para alterá-lo.", "info");
+            if (currentPin !== (profile.pin || '0000')) return showToast("PIN Atual incorreto.", "error");
+            if (newPin !== confirmPin) return showToast("O Novo PIN e a confirmação não coincidem.", "error");
             if (newPin && !/^\d{4}$/.test(newPin)) {
-                return alert("O Novo PIN deve ter exatamente 4 dígitos numéricos.");
+                return showToast("O Novo PIN deve ter exatamente 4 dígitos numéricos.", "error");
             }
             if (newPin) finalPin = newPin;
         }
@@ -1415,14 +1428,14 @@ export default function App() {
             }
         }
 
-        alert("Perfil atualizado com sucesso!");
+        showToast("Perfil atualizado com sucesso!", "success");
     };
 
     // --- MANAUL SYNC TO CLOUD ---
     const handleSyncToCloud = async () => {
         const uid = auth.currentUser?.uid;
         if (!uid) {
-            alert("Você precisa estar logado para salvar na nuvem.");
+            showToast("Você precisa estar logado para salvar na nuvem.", "error");
             return;
         }
         setIsSyncing(true);
@@ -1433,7 +1446,7 @@ export default function App() {
             setTimeout(() => setSyncMessage(''), 3000);
         } catch (err: any) {
             console.error("Erro ao sincronizar dados manualmente:", err);
-            alert("Erro ao salvar dados na nuvem: " + err.message);
+            showToast("Erro ao salvar dados na nuvem: " + err.message, "error");
         } finally {
             setIsSyncing(false);
         }
@@ -1830,7 +1843,37 @@ export default function App() {
 
             <main className="flex-1 h-[calc(100vh-64px)] md:h-screen overflow-y-auto p-4 md:p-8 relative bg-slate-50">
 
-                {/* GLOBAL TOP-RIGHT SAVE BUTTON REMOVED FROM HERE, MOVED TO SIDEBAR/HEADER */}
+                <div className="absolute top-4 right-4 md:top-8 md:right-8 z-20 flex items-center gap-2">
+                    {syncMessage && <span className="text-xs font-bold text-indigo-500 bg-indigo-50 px-2 py-1 rounded shadow-sm animate-fade-in">{syncMessage}</span>}
+                    <button
+                        onClick={async () => {
+                            const uid = auth.currentUser?.uid;
+                            if (!uid) {
+                                showToast("Você precisa estar logado para salvar na nuvem.", "error");
+                                return;
+                            }
+                            setIsSyncing(true);
+                            setSyncMessage('Salvando na nuvem...');
+                            try {
+                                await firestoreSyncAll(uid, data, profile);
+                                setSyncMessage('Salvo com sucesso!');
+                            } catch (err: any) {
+                                console.error(err);
+                                setSyncMessage('Erro ao salvar.');
+                                showToast("Erro ao salvar: " + err.message, "error");
+                            } finally {
+                                setTimeout(() => {
+                                    setIsSyncing(false);
+                                    setSyncMessage('');
+                                }, 3000);
+                            }
+                        }}
+                        className="w-10 h-10 md:w-12 md:h-12 bg-white hover:bg-indigo-50 border-2 border-indigo-200 hover:border-indigo-400 text-indigo-600 rounded-xl flex items-center justify-center transition-all shadow-lg hover:shadow-xl cursor-pointer"
+                        title="Salvar na Nuvem (Sync)"
+                    >
+                        {isSyncing ? <i className="fas fa-spinner fa-spin text-lg md:text-xl"></i> : <i className="fas fa-cloud-upload-alt text-lg md:text-xl"></i>}
+                    </button>
+                </div>
 
                 {view === 'profile' && (
                     <div className="max-w-2xl mx-auto animate-fade-in">
@@ -2245,52 +2288,36 @@ export default function App() {
                             <div className="flex flex-col md:flex-row items-center gap-4 mb-4 md:mb-6 bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
                                 <div className="flex-1 w-full md:w-auto">
                                     <label className="text-[10px] font-bold text-slate-400 uppercase">Escola</label>
-                                    <select className="w-full bg-transparent font-bold text-slate-800 outline-none cursor-pointer py-1" value={selectedSchoolId} onChange={e => { setSelectedSchoolId(e.target.value); setSelectedClassId(''); }}>
-                                        <option value="">Selecione...</option>
-                                        {data.schools.map(school => <option key={school.id} value={school.id}>{school.name}</option>)}
-                                    </select>
+                                    <button
+                                        onClick={() => setModalConfig({ isOpen: true, type: 'school-selector' as any, mode: 'create' })}
+                                        className="w-full flex items-center justify-between py-1 font-bold text-slate-800 group"
+                                    >
+                                        <span className="truncate group-hover:text-indigo-600 transition-colors">{currentSchool?.name || 'Selecione a Escola...'}</span>
+                                        <i className="fas fa-chevron-down text-[10px] opacity-30 group-hover:opacity-100 transition-all"></i>
+                                    </button>
                                 </div>
                                 <div className="hidden md:block w-px h-8 bg-slate-200"></div>
                                 <div className="flex-1 w-full md:w-auto border-t md:border-t-0 border-slate-100 pt-2 md:pt-0">
                                     <label className="text-[10px] font-bold text-slate-400 uppercase">Turma</label>
-                                    <select className="w-full bg-transparent font-bold text-slate-800 outline-none cursor-pointer py-1" value={selectedClassId} onChange={e => setSelectedClassId(e.target.value)}>
-                                        <option value="">Selecione...</option>
-                                        {currentSchool?.classes?.map(cls => <option key={cls.id} value={cls.id}>{cls.name}</option>)}
-                                    </select>
+                                    <button
+                                        onClick={() => {
+                                            if (!selectedSchoolId) {
+                                                showToast("Selecione uma escola primeiro.", "info");
+                                                return;
+                                            }
+                                            setModalConfig({ isOpen: true, type: 'class-selector' as any, mode: 'create' });
+                                        }}
+                                        className="w-full flex items-center justify-between py-1 font-bold text-slate-800 group"
+                                    >
+                                        <span className="truncate group-hover:text-indigo-600 transition-colors">{currentClass?.name || 'Selecione a Turma...'}</span>
+                                        <i className="fas fa-chevron-down text-[10px] opacity-30 group-hover:opacity-100 transition-all"></i>
+                                    </button>
                                 </div>
                                 <div className="flex bg-slate-100 rounded-lg p-1 w-full md:w-auto overflow-x-auto justify-between md:justify-start mt-2 md:mt-0">
                                     {[1, 2, 3, 4].map(b => (
                                         <button key={b} onClick={() => setCurrentBimester(b as Bimester)} className={`flex-1 md:flex-none px-3 py-1 rounded-md text-xs font-bold transition-all whitespace-nowrap ${currentBimester === b ? 'bg-white shadow text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}>{b}º Bim</button>
                                     ))}
                                 </div>
-
-                                <button
-                                    onClick={async () => {
-                                        setIsSyncing(true);
-                                        setSyncMessage('Salvando na nuvem...');
-                                        try {
-                                            const uid = auth.currentUser?.uid;
-                                            if (uid) {
-                                                await firestoreSyncAll(uid, data, profile);
-                                                setSyncMessage('Salvo com sucesso!');
-                                            } else {
-                                                setSyncMessage('Erro: Não autenticado.');
-                                            }
-                                        } catch (e) {
-                                            console.error(e);
-                                            setSyncMessage('Erro ao salvar.');
-                                        }
-                                        setTimeout(() => {
-                                            setIsSyncing(false);
-                                            setSyncMessage('');
-                                        }, 3000);
-                                    }}
-                                    className="hidden md:flex ml-auto w-10 h-10 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-600 rounded-xl items-center justify-center transition-all shadow-sm"
-                                    title="Salvar na Nuvem"
-                                >
-                                    {isSyncing ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-cloud-upload-alt"></i>}
-                                </button>
-                                {syncMessage && <span className="hidden md:block text-xs font-bold text-indigo-500 animate-fade-in">{syncMessage}</span>}
                             </div>
 
                             {!selectedClassId ? (
@@ -2322,11 +2349,19 @@ export default function App() {
                                                     <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
                                                     <input
                                                         type="text"
-                                                        placeholder="Buscar Aluno..."
+                                                        placeholder="Buscar aluno(a)..."
                                                         value={studentSearch}
                                                         onChange={(e) => setStudentSearch(e.target.value)}
-                                                        className="w-full md:w-48 pl-8 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg outline-none focus:border-indigo-400 bg-white"
+                                                        className="w-full md:w-48 pl-8 pr-8 py-1.5 text-xs border border-slate-200 rounded-lg outline-none focus:border-indigo-400 bg-white"
                                                     />
+                                                    {studentSearch && (
+                                                        <button
+                                                            onClick={() => setStudentSearch('')}
+                                                            className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 transition-colors"
+                                                        >
+                                                            <i className="fas fa-times-circle"></i>
+                                                        </button>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>
@@ -2348,8 +2383,7 @@ export default function App() {
                                                             setIndividualScores(s => ({ ...s, [student.id]: defaultPts }));
                                                             return [...prev, student.id];
                                                         })}
-                                                        className={`p-3 rounded-xl flex items-center justify-between cursor-pointer border-2 transition-all group ${isSelected ? 'bg-indigo-50 border-indigo-500 shadow-sm' : (student.marked ? 'bg-white hover:bg-slate-50' : 'bg-white border-transparent hover:bg-slate-50')}`}
-                                                        style={(!isSelected && student.marked && student.markedColor) ? { borderColor: student.markedColor } : {}}
+                                                        className={`p-3 rounded-xl flex items-center justify-between cursor-pointer border-2 transition-all group ${isSelected ? 'bg-indigo-50 border-indigo-500 shadow-sm' : 'bg-white border-slate-100 hover:border-indigo-200'}`}
                                                     >
                                                         <div className="flex items-center gap-3 overflow-hidden">
                                                             <div className={`w-10 h-10 rounded-full ${level.color} flex items-center justify-center text-white font-bold text-sm shadow-sm flex-shrink-0 relative`}>
@@ -2462,33 +2496,40 @@ export default function App() {
                                             </button>
                                         </div>
 
-                                        {!isGivingBadge && !selectedTaskId && (
+                                        {!isGivingBadge && (
                                             <div className="animate-fade-in space-y-4">
-                                                <Input
-                                                    placeholder="Título / Motivo (ex: Ajudou colega)"
-                                                    value={manualDesc}
-                                                    onFocus={(e: any) => {
-                                                        if (!manualDesc) {
-                                                            setManualDesc(`Missão diária de ${profile?.subject || 'Linguagens'}`);
-                                                        }
-                                                        setTimeout(() => e.target.select(), 10);
-                                                    }}
-                                                    onChange={(e: any) => setManualDesc(e.target.value)}
-                                                />
-                                                <Input
-                                                    placeholder="Descrição (opcional)"
-                                                    value={customMissionDesc}
-                                                    onChange={(e: any) => setCustomMissionDesc(e.target.value)}
-                                                />
-                                                <div className="flex items-center gap-2 justify-center mt-2">
-                                                    <button onClick={() => setManualPoints(p => Math.max(-10, p - 5))} className="w-8 h-8 md:w-10 md:h-10 bg-slate-100 rounded-lg font-bold hover:bg-slate-200 touch-manipulation text-slate-600">-</button>
-                                                    <input type="number" className="w-16 md:w-20 text-center font-bold text-lg md:text-xl py-1 border-b-2 border-indigo-100 outline-none bg-transparent" value={manualPoints} onChange={e => {
-                                                        let val = parseInt(e.target.value) || 0;
-                                                        if (val < -10) val = -10;
-                                                        if (val > 250) val = 250;
-                                                        setManualPoints(val);
-                                                    }} />
-                                                    <button onClick={() => setManualPoints(p => Math.min(250, p + 5))} className="w-8 h-8 md:w-10 md:h-10 bg-slate-100 rounded-lg font-bold hover:bg-slate-200 touch-manipulation text-slate-600">+</button>
+                                                <div>
+                                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Título / Motivo</label>
+                                                    <Input
+                                                        placeholder="Ex: Participação em Aula"
+                                                        value={manualDesc}
+                                                        onFocus={(e: any) => {
+                                                            if (!manualDesc && !selectedTaskId) {
+                                                                setManualDesc(`Atividade de ${profile?.subject || 'Linguagens'}`);
+                                                            }
+                                                            setTimeout(() => e.target.select(), 10);
+                                                        }}
+                                                        onChange={(e: any) => setManualDesc(e.target.value)}
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Descrição da Missão</label>
+                                                    <Input
+                                                        placeholder="Válido apenas para este lançamento..."
+                                                        value={customMissionDesc}
+                                                        onChange={(e: any) => setCustomMissionDesc(e.target.value)}
+                                                    />
+                                                </div>
+                                                <div className="flex items-center gap-2 justify-center mt-2 bg-slate-50 p-2 rounded-xl border border-slate-100">
+                                                    <button onClick={() => setManualPoints(p => Math.max(-20, p - 5))} className="w-8 h-8 md:w-10 md:h-10 bg-white shadow-sm border border-slate-200 rounded-lg font-bold hover:bg-slate-50 touch-manipulation text-slate-600">-</button>
+                                                    <div className="flex flex-col items-center px-4">
+                                                        <label className="text-[9px] font-bold text-slate-400 uppercase">LXC</label>
+                                                        <input type="number" className="w-16 md:w-20 text-center font-bold text-lg md:text-xl outline-none bg-transparent text-indigo-600" value={manualPoints} onChange={e => {
+                                                            let val = parseInt(e.target.value) || 0;
+                                                            setManualPoints(val);
+                                                        }} />
+                                                    </div>
+                                                    <button onClick={() => setManualPoints(p => Math.min(500, p + 5))} className="w-8 h-8 md:w-10 md:h-10 bg-white shadow-sm border border-slate-200 rounded-lg font-bold hover:bg-slate-50 touch-manipulation text-slate-600">+</button>
                                                 </div>
                                             </div>
                                         )}
@@ -2509,6 +2550,56 @@ export default function App() {
                     )
                 }
             </main >
+
+            {modalConfig.isOpen && (modalConfig.type === 'school-selector' || modalConfig.type === 'class-selector') && (
+                <div className="fixed inset-0 bg-slate-900/60 flex items-end md:items-center justify-center z-50 backdrop-blur-sm p-0 md:p-4 animate-fade-in" onClick={closeModal}>
+                    <div className="bg-white rounded-t-2xl md:rounded-2xl p-6 w-full md:max-w-md shadow-2xl h-[70vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                        <div className="flex justify-between items-center mb-6 flex-shrink-0">
+                            <h3 className="text-xl font-bold text-slate-800">{modalConfig.type === 'school-selector' ? 'Selecionar Escola' : 'Selecionar Turma'}</h3>
+                            <button onClick={closeModal} className="w-8 h-8 flex items-center justify-center bg-slate-100 rounded-full text-slate-400 hover:text-red-500 transition-colors"><i className="fas fa-times"></i></button>
+                        </div>
+                        <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2">
+                            {modalConfig.type === 'school-selector' ? (
+                                data.schools.map(school => (
+                                    <button
+                                        key={school.id}
+                                        onClick={() => {
+                                            setSelectedSchoolId(school.id);
+                                            setSelectedClassId('');
+                                            closeModal();
+                                        }}
+                                        className={`w-full p-4 rounded-xl border-2 text-left transition-all flex items-center gap-3 ${selectedSchoolId === school.id ? 'border-indigo-500 bg-indigo-50 shadow-sm' : 'border-slate-100 hover:border-indigo-200 bg-white'}`}
+                                    >
+                                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${selectedSchoolId === school.id ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                                            <i className="fas fa-school"></i>
+                                        </div>
+                                        <span className={`font-bold ${selectedSchoolId === school.id ? 'text-indigo-900' : 'text-slate-700'}`}>{school.name}</span>
+                                    </button>
+                                ))
+                            ) : (
+                                currentSchool?.classes?.map(cls => (
+                                    <button
+                                        key={cls.id}
+                                        onClick={() => {
+                                            setSelectedClassId(cls.id);
+                                            closeModal();
+                                        }}
+                                        className={`w-full p-4 rounded-xl border-2 text-left transition-all flex items-center gap-3 ${selectedClassId === cls.id ? 'border-indigo-500 bg-indigo-50 shadow-sm' : 'border-slate-100 hover:border-indigo-200 bg-white'}`}
+                                    >
+                                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${selectedClassId === cls.id ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                                            <i className="fas fa-chalkboard-teacher"></i>
+                                        </div>
+                                        <div className="flex-1">
+                                            <h4 className={`font-bold ${selectedClassId === cls.id ? 'text-indigo-900' : 'text-slate-700'}`}>{cls.name}</h4>
+                                            <p className="text-[10px] opacity-70 italic">{cls.students?.length || 0} alunos</p>
+                                        </div>
+                                    </button>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {modalConfig.isOpen && modalConfig.type === 'mission-selector' && (
                 <div className="fixed inset-0 bg-slate-900/60 flex items-end md:items-center justify-center z-50 backdrop-blur-sm p-0 md:p-4 animate-fade-in" onClick={e => e.stopPropagation()}>
@@ -3308,6 +3399,25 @@ export default function App() {
                 </GenericModal>
             )
             }
+
+            {/* --- TOAST NOTIFICATION --- */}
+            {notification.isOpen && (
+                <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[100] animate-bounce-in`}>
+                    <div className={`flex items-center gap-3 px-6 py-3 rounded-2xl shadow-2xl border-2 ${notification.type === 'success' ? 'bg-emerald-50 border-emerald-100 text-emerald-700' :
+                        notification.type === 'error' ? 'bg-red-50 border-red-100 text-red-700' :
+                            'bg-indigo-50 border-indigo-100 text-indigo-700'
+                        }`}>
+                        <i className={`fas ${notification.type === 'success' ? 'fa-check-circle' :
+                            notification.type === 'error' ? 'fa-exclamation-circle' :
+                                'fa-info-circle'
+                            }`}></i>
+                        <span className="font-bold text-sm tracking-tight">{notification.message}</span>
+                        <button onClick={() => setNotification(prev => ({ ...prev, isOpen: false }))} className="ml-2 hover:opacity-70 transition-opacity">
+                            <i className="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+            )}
 
         </div >
     );

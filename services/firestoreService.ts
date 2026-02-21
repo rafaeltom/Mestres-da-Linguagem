@@ -48,67 +48,67 @@ export const getTeacherProfile = async (uid: string): Promise<TeacherProfileData
 // --- DATA LOADING (FULL FETCH) ---
 
 export const fetchTeacherData = async (uid: string) => {
-  console.log("Fetching data for teacher:", uid);
+  console.log("[Firestore] Fetching data for teacher:", uid);
 
-  // 1. Schools
-  const qSchools = query(collection(db, COLL_SCHOOLS), where("ownerId", "==", uid));
-  const schoolsSnap = await getDocs(qSchools);
-  const schools: School[] = schoolsSnap.docs.map(d => ({ ...d.data(), id: d.id, classes: [] } as School));
+  try {
+    const [schoolsSnap, classesSnap, studentsSnap, tasksSnap, badgesSnap, penaltiesSnap, txSnap] = await Promise.all([
+      getDocs(query(collection(db, COLL_SCHOOLS), where("ownerId", "==", uid))),
+      getDocs(query(collection(db, COLL_CLASSES), where("ownerId", "==", uid))),
+      getDocs(query(collection(db, COLL_STUDENTS), where("ownerId", "==", uid))),
+      getDocs(query(collection(db, COLL_CATALOG_TASKS), where("ownerId", "==", uid))),
+      getDocs(query(collection(db, COLL_CATALOG_BADGES), where("ownerId", "==", uid))),
+      getDocs(query(collection(db, COLL_CATALOG_PENALTIES), where("ownerId", "==", uid))),
+      getDocs(query(collection(db, COLL_TRANSACTIONS), where("ownerId", "==", uid)))
+    ]);
 
-  // 2. Classes
-  const qClasses = query(collection(db, COLL_CLASSES), where("ownerId", "==", uid));
-  const classesSnap = await getDocs(qClasses);
-  classesSnap.forEach(d => {
-    const c = { ...d.data(), id: d.id, students: [] } as ClassGroup;
-    const parentSchool = schools.find(s => s.id === c.schoolId);
-    if (parentSchool) {
-      if (!parentSchool.classes) parentSchool.classes = [];
-      parentSchool.classes.push(c);
-    }
-  });
+    const schools: School[] = schoolsSnap.docs.map(d => ({ ...d.data(), id: d.id, classes: [] } as School));
 
-  // 3. Students
-  const qStudents = query(collection(db, COLL_STUDENTS), where("ownerId", "==", uid));
-  const studentsSnap = await getDocs(qStudents);
-  studentsSnap.forEach(d => {
-    const s = { ...d.data(), id: d.id } as Student;
-    schools.forEach(school => {
-      const parentClass = school.classes?.find(c => c.id === s.classId);
-      if (parentClass) {
-        if (!parentClass.students) parentClass.students = [];
-        parentClass.students.push(s);
+    classesSnap.forEach(d => {
+      const c = { ...d.data(), id: d.id, students: [] } as ClassGroup;
+      const parentSchool = schools.find(s => s.id === c.schoolId);
+      if (parentSchool) {
+        if (!parentSchool.classes) parentSchool.classes = [];
+        parentSchool.classes.push(c);
       }
     });
-  });
 
-  // 4. Catalog
-  const qTasks = query(collection(db, COLL_CATALOG_TASKS), where("ownerId", "==", uid));
-  const tasks = (await getDocs(qTasks)).docs.map(d => ({ ...d.data(), id: d.id } as TaskDefinition));
+    studentsSnap.forEach(d => {
+      const s = { ...d.data(), id: d.id } as Student;
+      schools.forEach(school => {
+        const parentClass = school.classes?.find(c => c.id === s.classId);
+        if (parentClass) {
+          if (!parentClass.students) parentClass.students = [];
+          parentClass.students.push(s);
+        }
+      });
+    });
 
-  const qBadges = query(collection(db, COLL_CATALOG_BADGES), where("ownerId", "==", uid));
-  const badges = (await getDocs(qBadges)).docs.map(d => ({ ...d.data(), id: d.id } as Badge));
+    const tasks = tasksSnap.docs.map(d => ({ ...d.data(), id: d.id } as TaskDefinition));
+    const badges = badgesSnap.docs.map(d => ({ ...d.data(), id: d.id } as Badge));
+    const penalties = penaltiesSnap.docs.map(d => ({ ...d.data(), id: d.id } as PenaltyDefinition));
 
-  const qPenalties = query(collection(db, COLL_CATALOG_PENALTIES), where("ownerId", "==", uid));
-  const penalties = (await getDocs(qPenalties)).docs.map(d => ({ ...d.data(), id: d.id } as PenaltyDefinition));
+    const transactions = txSnap.docs.map(d => {
+      const data = d.data();
+      return {
+        ...data,
+        id: d.id,
+        date: data.date?.toDate ? data.date.toDate() : new Date(data.date)
+      } as Transaction;
+    });
 
-  // 5. Transactions
-  const qTx = query(collection(db, COLL_TRANSACTIONS), where("ownerId", "==", uid));
-  const transactions = (await getDocs(qTx)).docs.map(d => {
-    const data = d.data();
+    console.log(`[Firestore] Loaded: ${schools.length} schools, ${transactions.length} transactions.`);
+
     return {
-      ...data,
-      id: d.id,
-      date: data.date?.toDate ? data.date.toDate() : new Date(data.date)
-    } as Transaction;
-  });
-
-  return {
-    schools,
-    taskCatalog: tasks,
-    badgesCatalog: badges,
-    penaltiesCatalog: penalties,
-    transactions
-  };
+      schools,
+      taskCatalog: tasks,
+      badgesCatalog: badges,
+      penaltiesCatalog: penalties,
+      transactions
+    };
+  } catch (err) {
+    console.error("[Firestore] Error fetching teacher data:", err);
+    throw err;
+  }
 };
 
 // --- CRUD OPERATIONS ---
@@ -308,6 +308,8 @@ export const firestoreSyncAll = async (uid: string, data: AppData, profile: Teac
 
   // Execute in batches (Firestore limit is 500 operations per batch)
   const chunkSize = 400;
+  console.log(`[Firestore] Syncing ${operations.length} operations in batches of ${chunkSize}...`);
+
   for (let i = 0; i < operations.length; i += chunkSize) {
     const chunk = operations.slice(i, i + chunkSize);
     const batch = writeBatch(db);
@@ -319,5 +321,7 @@ export const firestoreSyncAll = async (uid: string, data: AppData, profile: Teac
       }
     });
     await batch.commit();
+    console.log(`[Firestore] Batch ${Math.floor(i / chunkSize) + 1} commit success.`);
   }
+  console.log("[Firestore] Full sync complete.");
 };
