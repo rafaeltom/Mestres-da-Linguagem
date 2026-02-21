@@ -2698,7 +2698,7 @@ export default function App() {
             }
 
             {
-                modalConfig.isOpen && modalConfig.type !== 'mission-selector' && (
+                modalConfig.isOpen && modalConfig.type !== 'mission-selector' && modalConfig.type !== 'school-selector' && modalConfig.type !== 'class-selector' && (
                     <GenericModal
                         title={
                             modalConfig.mode === 'create'
