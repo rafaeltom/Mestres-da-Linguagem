@@ -321,7 +321,7 @@ const LoginScreen = ({ onLogin }: { onLogin: (e: string, p: string) => Promise<b
 
                 <p className="text-[10px] text-center text-slate-400 mt-6 flex flex-col items-center gap-1">
                     <span>&copy; 2026 Projeto Mestres da Linguagem</span>
-                    <span className="uppercase tracking-widest font-bold text-indigo-400/50">Beta 0.7</span>
+                    <span className="uppercase tracking-widest font-bold text-indigo-400/50">Beta 0.8</span>
                 </p>
             </div>
         </div>
