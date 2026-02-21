@@ -2130,21 +2130,35 @@ export default function App() {
                                     <div key={school.id} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                                         <div className="bg-slate-50 p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-100 gap-4">
                                             <div className="flex items-center gap-3 w-full sm:w-auto">
-                                                {school.iconUrl ? (
-                                                    <img src={school.iconUrl} alt={school.name} className="w-10 h-10 rounded-lg object-cover bg-white shadow-sm flex-shrink-0" />
-                                                ) : (() => {
-                                                    const cleanName = school.name.toLowerCase();
-                                                    let defaultLogo = '';
-                                                    if (cleanName.includes('alípio') || cleanName.includes('alipio')) defaultLogo = 'alipiologo.png';
-                                                    else if (cleanName.includes('aparecida') || cleanName.includes('nsa')) defaultLogo = 'nsalogo.png';
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); openModal('school', 'edit', school); }}
+                                                    className="relative group/logo flex-shrink-0 transition-transform hover:scale-105 active:scale-95"
+                                                    title="Clique para alterar o logo da escola"
+                                                >
+                                                    {school.iconUrl ? (
+                                                        <img src={school.iconUrl} alt={school.name} className="w-12 h-12 rounded-lg object-cover bg-white shadow-sm border-2 border-transparent group-hover/logo:border-indigo-400 transition-colors" />
+                                                    ) : (() => {
+                                                        const cleanName = school.name.toLowerCase();
+                                                        let defaultLogo = '';
+                                                        if (cleanName.includes('alípio') || cleanName.includes('alipio')) defaultLogo = '/alipiologo.png';
+                                                        else if (cleanName.includes('aparecida') || cleanName.includes('nsa')) defaultLogo = '/nsalogo.png';
 
-                                                    return defaultLogo ? (
-                                                        <img src={defaultLogo} alt={school.name} className="w-10 h-10 rounded-lg object-contain bg-white shadow-sm flex-shrink-0" />
-                                                    ) : (
-                                                        <div className="w-10 h-10 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center flex-shrink-0"><i className="fas fa-school"></i></div>
-                                                    );
-                                                })()}
-                                                <h3 className="font-bold text-lg text-slate-700 truncate">{school.name}</h3>
+                                                        return defaultLogo ? (
+                                                            <img src={defaultLogo} alt={school.name} className="w-12 h-12 rounded-lg object-contain bg-white shadow-sm border-2 border-transparent group-hover/logo:border-indigo-400 transition-colors" />
+                                                        ) : (
+                                                            <div className="w-12 h-12 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center border-2 border-transparent group-hover/logo:border-indigo-400 transition-colors">
+                                                                <i className="fas fa-school text-xl"></i>
+                                                            </div>
+                                                        );
+                                                    })()}
+                                                    <div className="absolute inset-0 bg-black/40 rounded-lg opacity-0 group-hover/logo:opacity-100 flex items-center justify-center transition-opacity">
+                                                        <i className="fas fa-camera text-white text-xs"></i>
+                                                    </div>
+                                                </button>
+                                                <div className="min-w-0 pr-2">
+                                                    <h3 className="font-bold text-lg text-slate-700 truncate leading-tight">{school.name}</h3>
+                                                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Gestão Escolar</p>
+                                                </div>
                                             </div>
                                             <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
                                                 <Button variant="icon" onClick={(e: any) => { e.stopPropagation(); openModal('school', 'edit', school); }} title="Editar Escola"><i className="fas fa-pen"></i></Button>
@@ -2573,12 +2587,27 @@ export default function App() {
 
                         {modalConfig.type === 'school' && (
                             <div className="space-y-4">
-                                <Input
-                                    label="URL do Ícone / Logo da Escola (Opcional)"
-                                    placeholder="https://exemplo.com/logo.png"
-                                    value={formData.schoolIconUrl || ''}
-                                    onChange={(e: any) => setFormData({ ...formData, schoolIconUrl: e.target.value })}
-                                />
+                                <div className="flex flex-col md:flex-row gap-4 items-start">
+                                    <div className="w-full md:flex-1">
+                                        <Input
+                                            label="URL do Ícone / Logo da Escola"
+                                            placeholder="https://exemplo.com/logo.png"
+                                            value={formData.schoolIconUrl || ''}
+                                            onChange={(e: any) => setFormData({ ...formData, schoolIconUrl: e.target.value })}
+                                        />
+                                        <p className="text-[10px] text-slate-400 mt-1">
+                                            <i className="fas fa-info-circle mr-1"></i>
+                                            Dica: Você pode usar links do Imgur, PostImages ou o URL de uma imagem já existente na internet.
+                                        </p>
+                                    </div>
+                                    <div className="w-20 h-20 bg-slate-100 rounded-xl border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden flex-shrink-0">
+                                        {formData.schoolIconUrl ? (
+                                            <img src={formData.schoolIconUrl} alt="Preview" className="w-full h-full object-cover" onError={(e: any) => e.target.src = 'https://via.placeholder.com/80?text=Erro'} />
+                                        ) : (
+                                            <i className="fas fa-school text-slate-300 text-2xl"></i>
+                                        )}
+                                    </div>
+                                </div>
                                 <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl">
                                     <label className="block text-xs font-bold text-slate-500 uppercase mb-3">Definição dos Bimestres</label>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
