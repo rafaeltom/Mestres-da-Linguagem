@@ -35,18 +35,26 @@ export const LEVEL_RULES: Record<Bimester, LevelRule[]> = {
   ]
 };
 
-export const getLevel = (points: number, bimester: Bimester): LevelRule => {
-  const rules = LEVEL_RULES[bimester];
+export const getLevel = (points: number, bimester: Bimester, customRules?: Partial<Record<Bimester, LevelRule[]>>): LevelRule => {
+  const rules = (customRules?.[bimester]) || LEVEL_RULES[bimester];
   return rules.find(r => points >= r.min && (r.max === null || points <= r.max)) || rules[0];
 };
 
-export const getNextLevel = (points: number, bimester: Bimester): { pointsNeeded: number, nextTitle: string } | null => {
-  const current = getLevel(points, bimester);
+export const getNextLevel = (points: number, bimester: Bimester, customRules?: Partial<Record<Bimester, LevelRule[]>>): { pointsNeeded: number, nextTitle: string } | null => {
+  const rules = (customRules?.[bimester]) || LEVEL_RULES[bimester];
+  const current = getLevel(points, bimester, customRules);
   if (current.max === null) return null; // Nível máximo
-  
-  const rules = LEVEL_RULES[bimester];
+
   const next = rules.find(r => r.min > current.min);
-  
+
   if (!next) return null;
   return { pointsNeeded: next.min - points, nextTitle: next.title };
 };
+
+// Colors available for level tiers
+export const LEVEL_COLORS = [
+  'bg-slate-400', 'bg-blue-400', 'bg-green-400', 'bg-teal-500',
+  'bg-indigo-500', 'bg-purple-600', 'bg-pink-600', 'bg-rose-500',
+  'bg-amber-500', 'bg-orange-400', 'bg-yellow-500', 'bg-lime-400',
+  'bg-cyan-600', 'bg-emerald-500', 'bg-red-500'
+];

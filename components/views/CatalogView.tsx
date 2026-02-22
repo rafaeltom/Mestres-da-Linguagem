@@ -1,24 +1,62 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Button } from '../ui/SharedUI';
-import { TaskDefinition, Badge, PenaltyDefinition } from '../../types';
+import { TaskDefinition, Badge, PenaltyDefinition, LevelRule, Bimester } from '../../types';
 import { AppData } from '../../services/localStorageService';
+import { LEVEL_RULES, LEVEL_COLORS } from '../../utils/gamificationRules';
 
 export interface CatalogViewProps {
     data: AppData;
-    catalogTab: 'tasks' | 'badges' | 'penalties';
-    setCatalogTab: (tab: 'tasks' | 'badges' | 'penalties') => void;
+    catalogTab: 'tasks' | 'badges' | 'penalties' | 'levels';
+    setCatalogTab: (tab: 'tasks' | 'badges' | 'penalties' | 'levels') => void;
     setTutorialStep: (step: number) => void;
     setShowTutorial: (show: boolean) => void;
     openModal: (type: string, mode: string, item?: any) => void;
     requestDelete: (e: any, type: string, id: string, extra?: any, name?: string) => void;
     setPenaltySchoolId: (id: string) => void;
     setApplyPenaltyConfig: (config: any) => void;
+    onSaveLevelRules: (rules: Partial<Record<Bimester, LevelRule[]>>) => void;
 }
 
 export const CatalogView: React.FC<CatalogViewProps> = ({
     data, catalogTab, setCatalogTab, setTutorialStep, setShowTutorial,
-    openModal, requestDelete, setPenaltySchoolId, setApplyPenaltyConfig
+    openModal, requestDelete, setPenaltySchoolId, setApplyPenaltyConfig,
+    onSaveLevelRules
 }) => {
+    // levels editing state
+    const [editingRules, setEditingRules] = useState<Partial<Record<Bimester, LevelRule[]>> | null>(null);
+    const [activeLevelBim, setActiveLevelBim] = useState<Bimester>(1);
+    const [taskSearch, setTaskSearch] = useState('');
+    const [taskCategoryFilter, setTaskCategoryFilter] = useState<string>('all');
+
+    const startEditLevels = () => {
+        // Deep clone the current rules (custom or default)
+        const current = ([1, 2, 3, 4] as Bimester[]).reduce((acc, b) => {
+            acc[b] = JSON.parse(JSON.stringify((data.customLevelRules?.[b]) || LEVEL_RULES[b]));
+            return acc;
+        }, {} as Record<Bimester, LevelRule[]>);
+        setEditingRules(current);
+    };
+
+    const handleEditingRuleField = (bim: Bimester, idx: number, field: keyof LevelRule, value: any) => {
+        setEditingRules(prev => {
+            if (!prev) return prev;
+            const copy = { ...prev, [bim]: [...(prev[bim] || [])] };
+            (copy[bim] as LevelRule[])[idx] = { ...(copy[bim] as LevelRule[])[idx], [field]: value };
+            return copy;
+        });
+    };
+
+    const handleSaveLevels = () => {
+        if (!editingRules) return;
+        onSaveLevelRules(editingRules);
+        setEditingRules(null);
+    };
+
+    const handleResetLevels = () => {
+        onSaveLevelRules({});
+        setEditingRules(null);
+    };
+
     return (
         <div className="max-w-5xl mx-auto animate-fade-in">
             <div className="flex flex-col md:flex-row justify-between items-center mb-6 md:mb-8 gap-4">
@@ -31,39 +69,109 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                     </h2>
                     <p className="text-xs text-slate-500">Crie missões, medalhas e penalidades que estarão disponíveis para todas as escolas.</p>
                 </div>
-                <div className="flex bg-white rounded-xl p-1 shadow-sm border border-slate-200">
-                    <button onClick={() => setCatalogTab('tasks')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${catalogTab === 'tasks' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:text-indigo-600'}`}>Missões</button>
-                    <button onClick={() => setCatalogTab('badges')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${catalogTab === 'badges' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:text-indigo-600'}`}>Medalhas</button>
-                    <button onClick={() => setCatalogTab('penalties')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${catalogTab === 'penalties' ? 'bg-red-600 text-white shadow' : 'text-slate-500 hover:text-red-600'}`}>Penalidades</button>
+                <div className="flex bg-white rounded-xl p-1 shadow-sm border border-slate-200 flex-wrap gap-1">
+                    <button onClick={() => setCatalogTab('tasks')} className={`px-3 py-2 rounded-lg text-sm font-bold transition-all ${catalogTab === 'tasks' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:text-indigo-600'}`}>Missões</button>
+                    <button onClick={() => setCatalogTab('badges')} className={`px-3 py-2 rounded-lg text-sm font-bold transition-all ${catalogTab === 'badges' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:text-indigo-600'}`}>Medalhas</button>
+                    <button onClick={() => setCatalogTab('penalties')} className={`px-3 py-2 rounded-lg text-sm font-bold transition-all ${catalogTab === 'penalties' ? 'bg-red-600 text-white shadow' : 'text-slate-500 hover:text-red-600'}`}>Penalidades</button>
+                    <button onClick={() => { setCatalogTab('levels'); startEditLevels(); }} className={`px-3 py-2 rounded-lg text-sm font-bold transition-all ${catalogTab === 'levels' ? 'bg-purple-600 text-white shadow' : 'text-slate-500 hover:text-purple-600'}`}>Regras</button>
                 </div>
             </div>
 
             {catalogTab === 'tasks' && (
                 <div className="bg-white p-4 md:p-6 rounded-3xl shadow-sm border border-slate-200">
-                    <div className="flex justify-between items-center mb-6">
-                        <h3 className="text-lg font-bold text-indigo-900"><i className="fas fa-tasks mr-2"></i> Missões Padrão</h3>
-                        <Button onClick={() => openModal('task', 'create')} className="text-xs">+ Nova Missão</Button>
+                    {/* Header */}
+                    <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-lg font-bold text-indigo-900"><i className="fas fa-tasks mr-2"></i> Tarefas</h3>
+                        <Button onClick={() => openModal('task', 'create')} className="text-xs">+ Nova Tarefa</Button>
                     </div>
-                    <div className="space-y-3">
-                        {data.taskCatalog.length === 0 && <p className="text-center text-slate-400 py-4 italic">Nenhuma missão cadastrada.</p>}
-                        {data.taskCatalog.map(t => (
-                            <div key={t.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100 hover:border-indigo-200 transition-colors">
-                                <div className="min-w-0 pr-2">
-                                    <p className="font-bold text-slate-700 truncate">{t.title}</p>
-                                    <p className="text-xs text-slate-500 mb-1">Vale {t.defaultPoints} LXC</p>
-                                    <div className="flex gap-1 flex-wrap">
-                                        {t.bimesters && t.bimesters.map(b => (
-                                            <span key={b} className="text-[9px] bg-slate-200 px-1.5 rounded text-slate-600 font-bold">{b}ºB</span>
-                                        ))}
+
+                    {/* Search + Category filter */}
+                    <div className="flex flex-col sm:flex-row gap-3 mb-5">
+                        {/* Text search */}
+                        <div className="relative flex-1">
+                            <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                            <input
+                                type="text"
+                                placeholder="Buscar tarefa..."
+                                value={taskSearch}
+                                onChange={e => setTaskSearch(e.target.value)}
+                                className="w-full pl-8 pr-8 py-2 text-sm border border-slate-200 rounded-xl outline-none focus:border-indigo-400 bg-slate-50 transition-colors"
+                            />
+                            {taskSearch && (
+                                <button onClick={() => setTaskSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500">
+                                    <i className="fas fa-times-circle text-xs"></i>
+                                </button>
+                            )}
+                        </div>
+                        {/* Category chips */}
+                        <div className="flex gap-1.5 flex-wrap">
+                            {([
+                                { value: 'all', label: 'Todas', cls: 'bg-slate-100 text-slate-600 hover:bg-slate-200' },
+                                { value: 'Daily', label: 'Diária', cls: 'bg-sky-100 text-sky-600 hover:bg-sky-200' },
+                                { value: 'Weekly', label: 'Semanal', cls: 'bg-purple-100 text-purple-600 hover:bg-purple-200' },
+                                { value: 'Side Quest', label: 'Side Quest', cls: 'bg-emerald-100 text-emerald-600 hover:bg-emerald-200' },
+                                { value: 'Boss', label: 'Boss', cls: 'bg-rose-100 text-rose-600 hover:bg-rose-200' },
+                                { value: 'Custom', label: 'Rápida', cls: 'bg-slate-100 text-slate-500 hover:bg-slate-200' },
+                            ] as { value: string; label: string; cls: string }[]).map(cat => (
+                                <button
+                                    key={cat.value}
+                                    onClick={() => setTaskCategoryFilter(cat.value)}
+                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${cat.cls} ${taskCategoryFilter === cat.value ? 'ring-2 ring-offset-1 ring-indigo-400 shadow-sm' : 'opacity-70'}`}
+                                >
+                                    {cat.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Task grid */}
+                    {(() => {
+                        const filtered = data.taskCatalog.filter(t => {
+                            const matchText = !taskSearch ||
+                                t.title.toLowerCase().includes(taskSearch.toLowerCase()) ||
+                                (t.description || '').toLowerCase().includes(taskSearch.toLowerCase());
+                            const matchCat = taskCategoryFilter === 'all' ||
+                                (taskCategoryFilter === 'Custom' ? (!t.category || t.category === 'Custom') : t.category === taskCategoryFilter);
+                            return matchText && matchCat;
+                        });
+                        return (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {data.taskCatalog.length === 0 && <p className="col-span-full text-center text-slate-400 py-4 italic">Nenhuma tarefa cadastrada.</p>}
+                                {data.taskCatalog.length > 0 && filtered.length === 0 && <p className="col-span-full text-center text-slate-400 py-4 italic">Nenhuma tarefa encontrada para os filtros selecionados.</p>}
+                                {filtered.map(t => (
+                                    <div key={t.id} className="p-4 bg-white rounded-xl border-l-4 border-l-indigo-500 border border-slate-100 shadow-sm hover:shadow-md transition-all">
+                                        <div className="flex justify-between items-start">
+                                            <div className="flex-1 pr-2">
+                                                <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                                                    {(!t.category || t.category === 'Custom') && <span className="text-[9px] bg-slate-100 text-slate-600 font-bold px-1.5 py-0.5 rounded flex items-center gap-1 uppercase tracking-wider"><i className="fas fa-cogs"></i> Custom</span>}
+                                                    {t.category === 'Daily' && <span className="text-[9px] bg-sky-100 text-sky-600 font-bold px-1.5 py-0.5 rounded flex items-center gap-1 uppercase tracking-wider"><i className="fas fa-sun"></i> Diária</span>}
+                                                    {t.category === 'Weekly' && <span className="text-[9px] bg-purple-100 text-purple-600 font-bold px-1.5 py-0.5 rounded flex items-center gap-1 uppercase tracking-wider"><i className="fas fa-calendar-week"></i> Semanal</span>}
+                                                    {t.category === 'Side Quest' && <span className="text-[9px] bg-emerald-100 text-emerald-600 font-bold px-1.5 py-0.5 rounded flex items-center gap-1 uppercase tracking-wider"><i className="fas fa-map-signs"></i> Secundária</span>}
+                                                    {t.category === 'Boss' && <span className="text-[9px] bg-rose-100 text-rose-600 font-bold px-1.5 py-0.5 rounded flex items-center gap-1 uppercase tracking-wider"><i className="fas fa-dragon"></i> Global/Boss</span>}
+                                                </div>
+                                                <h4 className="font-bold text-slate-800 leading-tight">{t.title}</h4>
+                                                <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">{t.description || 'Sem descrição.'}</p>
+                                                <div className="flex items-center gap-2 mt-2">
+                                                    <span className="inline-block text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">
+                                                        {t.defaultPoints} LXC
+                                                    </span>
+                                                    {t.bimesters && t.bimesters.map(b => (
+                                                        <span key={b} className="text-[9px] bg-slate-100 px-1.5 py-1 rounded text-slate-500 font-bold">{b}ºB</span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            <div className="flex flex-col gap-2 flex-shrink-0 items-end">
+                                                <div className="flex justify-end gap-2">
+                                                    <button onClick={(e: any) => { e.stopPropagation(); openModal('task', 'edit', t); }} className="text-slate-400 hover:text-indigo-600 p-1"><i className="fas fa-pen"></i></button>
+                                                    <button onClick={(e: any) => requestDelete(e, 'task', t.id, undefined, t.title)} className="text-slate-400 hover:text-red-600 p-1"><i className="fas fa-trash"></i></button>
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
-                                </div>
-                                <div className="flex gap-1 flex-shrink-0">
-                                    <Button variant="icon" onClick={(e: any) => { e.stopPropagation(); openModal('task', 'edit', t); }} title="Editar"><i className="fas fa-pen"></i></Button>
-                                    <Button variant="icon" onClick={(e: any) => requestDelete(e, 'task', t.id, undefined, t.title)} title="Excluir"><i className="fas fa-trash text-red-400"></i></Button>
-                                </div>
+                                ))}
                             </div>
-                        ))}
-                    </div>
+                        );
+                    })()}
                 </div>
             )}
 
@@ -73,29 +181,38 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                         <h3 className="text-lg font-bold text-amber-600"><i className="fas fa-medal mr-2"></i> Medalhas & Conquistas</h3>
                         <Button onClick={() => openModal('badge', 'create')} variant="warning" className="text-xs">+ Nova Medalha</Button>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {data.badgesCatalog.length === 0 && <p className="col-span-3 text-center text-slate-400 py-4 italic">Nenhuma medalha cadastrada.</p>}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {data.badgesCatalog.length === 0 && <p className="col-span-full text-center text-slate-400 py-4 italic">Nenhuma medalha cadastrada.</p>}
                         {data.badgesCatalog.map(b => (
-                            <div key={b.id} className="flex items-center gap-3 p-3 bg-amber-50 rounded-xl border border-amber-100 relative hover:border-amber-300 transition-colors">
-                                {b.imageUrl ? (
-                                    <img src={b.imageUrl} alt="Medalha" className="w-10 h-10 rounded-full object-cover border border-amber-200 shadow-sm flex-shrink-0" />
-                                ) : (
-                                    <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center text-amber-500 shadow-sm flex-shrink-0 text-lg"><i className={`fas ${b.icon}`}></i></div>
-                                )}
-                                <div className="flex-1 min-w-0">
-                                    <p className="font-bold text-xs text-amber-900 leading-tight truncate">{b.name}</p>
-                                    {b.rewardValue && b.rewardValue > 0 ? (
-                                        <p className="text-[9px] text-emerald-600 font-bold">+ {b.rewardValue} LXC</p>
-                                    ) : null}
-                                    <div className="flex gap-1 mt-1 flex-wrap">
-                                        {b.bimesters && b.bimesters.map(bim => (
-                                            <span key={bim} className="text-[8px] bg-white border border-amber-200 px-1 rounded text-amber-600 font-bold">{bim}º</span>
-                                        ))}
+                            <div key={b.id} className="p-4 bg-white rounded-xl border-l-4 border-l-amber-500 border border-slate-100 shadow-sm hover:shadow-md transition-all">
+                                <div className="flex gap-4">
+                                    {b.imageUrl ? (
+                                        <img src={b.imageUrl} alt="Medalha" className="w-12 h-12 rounded-full object-cover border border-amber-200 shadow-sm flex-shrink-0" />
+                                    ) : (
+                                        <div className="w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center text-amber-500 shadow-sm flex-shrink-0 text-xl"><i className={`fas ${b.icon}`}></i></div>
+                                    )}
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex justify-between items-start">
+                                            <div className="pr-2">
+                                                <h4 className="font-bold text-slate-800">{b.name}</h4>
+                                                <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-2">{b.description}</p>
+                                                <div className="flex items-center gap-2 mt-2 flex-wrap">
+                                                    {b.rewardValue && b.rewardValue > 0 ? (
+                                                        <span className="inline-block text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg">
+                                                            + {b.rewardValue} LXC
+                                                        </span>
+                                                    ) : null}
+                                                    {b.bimesters && b.bimesters.map(bim => (
+                                                        <span key={bim} className="text-[9px] bg-slate-100 px-1.5 py-1 rounded text-slate-500 font-bold">{bim}ºB</span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            <div className="flex gap-2 flex-shrink-0">
+                                                <button onClick={(e) => { e.stopPropagation(); openModal('badge', 'edit', b); }} className="text-slate-400 hover:text-indigo-600 p-1"><i className="fas fa-pen"></i></button>
+                                                <button onClick={(e) => requestDelete(e, 'badge', b.id, undefined, b.name)} className="text-slate-400 hover:text-red-600 p-1"><i className="fas fa-trash"></i></button>
+                                            </div>
+                                        </div>
                                     </div>
-                                </div>
-                                <div className="flex gap-1 bg-amber-100/50 rounded-lg flex-shrink-0 p-1">
-                                    <button onClick={(e) => { e.stopPropagation(); openModal('badge', 'edit', b); }} className="text-amber-600 hover:text-amber-800 p-1"><i className="fas fa-pen text-xs"></i></button>
-                                    <button onClick={(e) => requestDelete(e, 'badge', b.id, undefined, b.name)} className="text-red-400 hover:text-red-600 p-1"><i className="fas fa-trash text-xs"></i></button>
                                 </div>
                             </div>
                         ))}
@@ -145,6 +262,51 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                             ))}
                         </div>
                     </div>
+                </div>
+            )}
+            {catalogTab === 'levels' && (
+                <div className="bg-white p-4 md:p-6 rounded-3xl shadow-sm border border-slate-200">
+                    {/* Header */}
+                    <div className="mb-4">
+                        <h3 className="text-lg font-bold text-purple-700"><i className="fas fa-layer-group mr-2"></i>Visualizar os níveis de gamificação</h3>
+                        <p className="text-xs text-slate-500 mt-1">Essas são as regras de níveis para a versão atual do projeto, disponíveis aqui apenas para visualização.</p>
+                    </div>
+
+                    {/* Info banner */}
+                    <div className="flex items-center gap-2 bg-purple-50 border border-purple-100 rounded-xl px-3 py-2 mb-5">
+                        <i className="fas fa-eye text-purple-400 text-sm flex-shrink-0"></i>
+                        <p className="text-[11px] text-purple-700">Atualmente os níveis estão disponíveis apenas para <strong>visualização</strong>. A personalização de níveis será habilitada em uma versão futura.</p>
+                    </div>
+
+                    {/* Bimester tabs */}
+                    <div className="flex gap-1 bg-slate-100 p-1 rounded-xl mb-5 flex-wrap">
+                        {([1, 2, 3, 4] as Bimester[]).map(b => (
+                            <button key={b} onClick={() => setActiveLevelBim(b)}
+                                className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all min-w-[60px] ${activeLevelBim === b ? 'bg-white shadow text-purple-700' : 'text-slate-400 hover:text-slate-700'}`}>
+                                {b}º Bimestre
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Read-only tier table */}
+                    {editingRules && (
+                        <div className="space-y-2">
+                            <div className="grid grid-cols-[1.5rem_1fr_5rem_4rem] gap-3 px-2">
+                                <span></span>
+                                <span className="text-[10px] font-bold text-slate-400 uppercase">Nome do Nível</span>
+                                <span className="text-[10px] font-bold text-slate-400 uppercase text-center">Mín. LXC</span>
+                                <span className="text-[10px] font-bold text-slate-400 uppercase text-center">Máx. LXC</span>
+                            </div>
+                            {(editingRules[activeLevelBim] || []).map((rule, idx) => (
+                                <div key={idx} className="grid grid-cols-[1.5rem_1fr_5rem_4rem] gap-3 items-center px-2 py-2.5 bg-slate-50 rounded-xl border border-slate-100">
+                                    <div className={`w-3 h-3 rounded-full flex-shrink-0 ${rule.color}`}></div>
+                                    <span className="font-semibold text-slate-700 text-sm">{rule.title}</span>
+                                    <span className="text-center font-mono text-sm text-slate-600 font-bold">{rule.min}</span>
+                                    <span className="text-center font-mono text-sm text-slate-400">{rule.max === null ? '∞' : rule.max}</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
             )}
         </div>

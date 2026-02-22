@@ -1,5 +1,5 @@
 
-import { School, Student, Transaction, TaskDefinition, Badge, TeacherProfileData, PenaltyDefinition, ClassGroup } from '../types';
+import { School, Student, Transaction, TaskDefinition, Badge, TeacherProfileData, PenaltyDefinition, ClassGroup, LevelRule, Bimester } from '../types';
 
 const DB_KEY = 'mestres_linguagem_v2';
 const PROFILE_KEY = 'mestres_teacher_profile';
@@ -23,6 +23,7 @@ export interface AppData {
   taskCatalog: TaskDefinition[];
   badgesCatalog: Badge[];
   penaltiesCatalog: PenaltyDefinition[];
+  customLevelRules?: Partial<Record<Bimester, LevelRule[]>>;
 }
 
 // Dados iniciais com Badges pré-configuradas

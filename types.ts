@@ -10,6 +10,7 @@ export interface LevelRule {
 
 export interface TeacherProfileData {
   name: string;
+  email?: string; // E-mail do professor (imutável após registro)
   displayName?: string; // Nome a ser exibido
   subject: string;
   bio: string;
@@ -78,12 +79,15 @@ export interface PenaltyDefinition {
   bimesters: Bimester[];
 }
 
+export type TaskCategory = 'Daily' | 'Weekly' | 'Side Quest' | 'Boss' | 'Custom';
+
 export interface TaskDefinition {
   id: string;
   title: string;
   description: string;
   defaultPoints: number;
   bimesters: Bimester[]; // Quais bimestres essa tarefa está disponível
+  category?: TaskCategory;
 }
 
 export interface Badge {

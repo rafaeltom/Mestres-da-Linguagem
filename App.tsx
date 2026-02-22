@@ -48,6 +48,7 @@ import { ProfileView } from './components/views/ProfileView';
 import { SettingsView } from './components/views/SettingsView';
 import { CatalogView } from './components/views/CatalogView';
 import { SchoolManagementView } from './components/views/SchoolManagementView';
+import { EditStudentsModal } from './components/modals/EditStudentsModal';
 import { DashboardView } from './components/views/DashboardView';
 import { StudentTimelineView } from './components/views/StudentTimelineView';
 // --- CONSTANTES VISUAIS ---
@@ -251,10 +252,7 @@ const LoginScreen = ({ onLogin }: { onLogin: (e: string, p: string) => Promise<b
                 <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-indigo-500 via-purple-500 to-amber-500"></div>
 
                 <div className="flex flex-col items-center mb-6">
-                    <div className="w-16 h-16 bg-slate-900 rounded-2xl flex items-center justify-center text-3xl text-indigo-400 shadow-lg mb-4">
-                        <i className="fas fa-gamepad"></i>
-                    </div>
-                    <h1 className="text-xl font-black gamified-font text-slate-800 text-center">Mestres da Linguagem</h1>
+                    <img src="/logomdl.png" alt="Mestres da Linguagem" className="h-20 object-contain mb-4 hover:scale-105 transition-transform" />
                 </div>
 
                 <form onSubmit={handleAuth} className="space-y-4 max-h-[60vh] overflow-y-auto px-1 pb-2 custom-scrollbar">
@@ -442,6 +440,7 @@ export default function App() {
     });
 
     const [showBatchImport, setShowBatchImport] = useState(false);
+    const [showEditStudents, setShowEditStudents] = useState(false);
     const [selectedStudentsForTask, setSelectedStudentsForTask] = useState<string[]>([]);
     const [selectedTaskId, setSelectedTaskId] = useState<string>('');
     const [manualDesc, setManualDesc] = useState('');
@@ -470,7 +469,7 @@ export default function App() {
     const [individualScores, setIndividualScores] = useState<Record<string, number>>({});
 
     // Estado para Penalidades
-    const [catalogTab, setCatalogTab] = useState<'tasks' | 'badges' | 'penalties'>('tasks');
+    const [catalogTab, setCatalogTab] = useState<'tasks' | 'badges' | 'penalties' | 'levels'>('tasks');
     const [applyPenaltyConfig, setApplyPenaltyConfig] = useState<{ isOpen: boolean; penaltyId: string | null; amount: number }>({ isOpen: false, penaltyId: null, amount: 0 });
     const [penaltyStudents, setPenaltyStudents] = useState<string[]>([]);
     const [penaltyClassId, setPenaltyClassId] = useState<string>('');
@@ -525,12 +524,20 @@ export default function App() {
                     }
 
                     // Profile
-                    const cloudProfile = await getTeacherProfile(user.uid);
+                    let cloudProfile = await getTeacherProfile(user.uid);
                     if (cloudProfile) {
+                        // Patch email if missing and update state
+                        if (!cloudProfile.email && user.email) {
+                            cloudProfile = { ...cloudProfile, email: user.email };
+                        }
                         setProfile(cloudProfile);
                         saveProfile(cloudProfile);
                     } else {
-                        await saveTeacherProfile(user.uid, profile);
+                        // New user: create profile with email
+                        const newProfile = { ...profile, email: user.email || '' };
+                        setProfile(newProfile);
+                        saveProfile(newProfile);
+                        await saveTeacherProfile(user.uid, newProfile);
                     }
 
                 } catch (err) {
@@ -760,7 +767,8 @@ export default function App() {
                     2: { start: '', end: '' },
                     3: { start: '', end: '' },
                     4: { start: '', end: '' }
-                }
+                },
+                category: dataItem.category || 'Custom'
             });
         } else {
             // Reset form
@@ -781,7 +789,8 @@ export default function App() {
                     2: { start: '', end: '' },
                     3: { start: '', end: '' },
                     4: { start: '', end: '' }
-                }
+                },
+                category: 'Custom'
             });
         }
     };
@@ -876,7 +885,7 @@ export default function App() {
 
     const handleModalSave = async () => {
         const { type, mode, editingId } = modalConfig;
-        const { name, description, points, icon, bimesters, imageUrl, rewardValue } = formData;
+        const { name, description, points, icon, bimesters, imageUrl, rewardValue, category } = formData;
 
         if (!name.trim()) return showToast("O nome é obrigatório.", "error");
         if ((type === 'task' || type === 'badge') && bimesters.length === 0) return showToast("Selecione pelo menos um bimestre.", "info");
@@ -928,13 +937,13 @@ export default function App() {
         else if (type === 'task') {
             const clampedPoints = Math.max(5, Math.min(250, Number(points)));
             if (mode === 'create') {
-                const newItem = { id: uuidv4(), title: name, description, defaultPoints: clampedPoints, bimesters: bimesters };
+                const newItem: TaskDefinition = { id: uuidv4(), title: name, description, defaultPoints: clampedPoints, bimesters: bimesters, category: category as any };
                 newData.taskCatalog.push(newItem);
                 if (uid) firestoreAddCatalogItem(uid, 'task', newItem);
             } else {
                 const task = newData.taskCatalog.find((t: TaskDefinition) => t.id === editingId);
                 if (task) {
-                    task.title = name; task.description = description; task.defaultPoints = clampedPoints; task.bimesters = bimesters;
+                    task.title = name; task.description = description; task.defaultPoints = clampedPoints; task.bimesters = bimesters; task.category = category as any;
                     if (uid) firestoreUpdateCatalogItem('task', task);
                 }
             }
@@ -1030,8 +1039,11 @@ export default function App() {
 
     // --- IMPORT SYSTEM ---
 
-    const batchImportStudents = async (studentNames: string[]) => {
+    const batchImportStudents = async (text: string) => {
         if (!selectedSchoolId || !selectedClassId) return showToast("Selecione escola e turma.", "error");
+
+        const studentNames = text.split('\n').map(n => n.trim()).filter(n => n);
+        if (studentNames.length === 0) return showToast("Insira ao menos um nome para importar.", "error");
 
         let currentData = JSON.parse(JSON.stringify(data));
         const school = currentData.schools.find((s: School) => s.id === selectedSchoolId);
@@ -1061,6 +1073,47 @@ export default function App() {
 
         showToast(`${newStudents.length} alunos importados!`, "success");
         setShowBatchImport(false);
+    };
+
+    const handleSaveEditStudents = async (updatedStudents: Student[]) => {
+        if (!selectedSchoolId || !selectedClassId) return;
+
+        let currentData = JSON.parse(JSON.stringify(data));
+        const school = currentData.schools.find((s: School) => s.id === selectedSchoolId);
+        const cls = school?.classes?.find((c: ClassGroup) => c.id === selectedClassId);
+        if (!cls) return;
+
+        const oldIds = (cls.students || []).map((s: Student) => s.id);
+        const newIds = updatedStudents.map(s => s.id);
+        const idsToDelete = oldIds.filter(id => !newIds.includes(id));
+
+        cls.students = updatedStudents;
+        setData(currentData);
+        saveData(currentData);
+
+        const uid = auth.currentUser?.uid;
+        if (uid) {
+            for (const s of updatedStudents) {
+                if (oldIds.includes(s.id)) {
+                    await firestoreUpdateStudent(s).catch(console.error);
+                } else {
+                    await firestoreAddStudent(uid, s).catch(console.error);
+                }
+            }
+            for (const id of idsToDelete) {
+                await firestoreDeleteStudent(id).catch(console.error);
+            }
+        }
+
+        showToast("Turma atualizada com sucesso!", "success");
+        setShowEditStudents(false);
+    };
+
+    const handleSaveLevelRules = (rules: Record<number, any>) => {
+        const newData = { ...data, customLevelRules: Object.keys(rules).length === 0 ? undefined : rules };
+        setData(newData as any);
+        saveData(newData as any);
+        showToast("Níveis atualizados com sucesso!", "success");
     };
 
     // --- REWARD SYSTEM ---
@@ -1093,7 +1146,7 @@ export default function App() {
                     customDescription: customMissionDesc || badge.description,
                     bimester: currentBimester,
                     date: new Date(),
-                    teacherName: profile.name
+                    teacherName: profile.displayName || profile.name
                 };
 
                 currentData.transactions.push(tx);
@@ -1131,7 +1184,7 @@ export default function App() {
                     customDescription: finalCustomDesc,
                     bimester: currentBimester,
                     date: new Date(),
-                    teacherName: profile.name
+                    teacherName: profile.displayName || profile.name
                 };
 
                 currentData.transactions.push(tx);
@@ -1490,6 +1543,9 @@ export default function App() {
     const filteredTasks = data.taskCatalog.filter(t => t.bimesters && t.bimesters.includes(currentBimester));
     const filteredBadges = data.badgesCatalog.filter(b => b.bimesters && b.bimesters.includes(currentBimester));
 
+    // Bound getLevel using current custom rules
+    const getLevelBound = (points: number, bimester: number) => getLevel(points, bimester as Bimester, (data as any).customLevelRules);
+
     // --- AUTH CHECK ---
     if (!isAuthenticated) {
         return <LoginScreen onLogin={performLogin} />;
@@ -1504,7 +1560,7 @@ export default function App() {
                 student={student}
                 data={data}
                 currentBimester={currentBimester}
-                getLevel={getLevel}
+                getLevel={getLevelBound}
                 setView={setView}
                 updateStudentNickname={updateStudentNickname}
                 viewingTransactionId={viewingTransactionId}
@@ -1563,8 +1619,7 @@ export default function App() {
         <div className="min-h-screen flex bg-slate-50 overflow-hidden font-sans text-slate-800 flex-col md:flex-row">
             <div className="md:hidden h-16 bg-slate-900 flex items-center justify-between px-6 z-30 shadow-md flex-shrink-0">
                 <div className="flex items-center gap-2">
-                    <i className="fas fa-gamepad text-indigo-400"></i>
-                    <span className="text-white font-bold gamified-font">Mestres da Linguagem</span>
+                    <img src="/logomdl.png" alt="Mestres da Linguagem" className="h-8 object-contain" />
                 </div>
                 <button onClick={() => setIsMobileMenuOpen(true)} className="text-white text-xl p-2">
                     <i className="fas fa-bars"></i>
@@ -1580,28 +1635,28 @@ export default function App() {
 
             <aside
                 className={`
-            fixed top-0 left-0 h-full w-64 bg-slate-900 text-white flex flex-col z-50 shadow-2xl 
+            fixed top-0 left-0 h-full w-64 md:w-32 bg-slate-900 text-white flex flex-col z-50 shadow-2xl 
             transform transition-transform duration-300 ease-in-out
             md:translate-x-0 md:static md:h-screen md:shadow-none
             ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
          `}
             >
-                <div className="p-6 flex justify-between items-center">
-                    <div>
-                        <h1 className="text-xl font-bold gamified-font text-indigo-400"><i className="fas fa-gamepad mr-2"></i>Mestres da Linguagem</h1>
-                        <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-1">Beta 0.9</p>
+                <div className="p-6 flex justify-between items-center md:justify-center">
+                    <div className="flex flex-col items-center">
+                        <img src="/logomdl.png" alt="Logo" className="w-32 md:w-20 object-contain transition-all" />
+                        <p className="text-[10px] text-slate-500 uppercase tracking-widest mt-2 md:mt-1 hidden md:block">Beta 0.10</p>
                     </div>
                     <button onClick={() => setIsMobileMenuOpen(false)} className="md:hidden text-slate-400 hover:text-white">
                         <i className="fas fa-times"></i>
                     </button>
                 </div>
-                <nav className="flex-1 px-4 space-y-2 mt-4 overflow-y-auto">
+                <nav className="flex-1 px-3 space-y-1 mt-2 overflow-y-auto">
                     {[
-                        { id: 'dashboard', icon: 'fa-chalkboard-teacher', label: 'Painel de Aulas' },
-                        { id: 'schools', icon: 'fa-school', label: 'Escolas & Turmas' },
-                        { id: 'catalog', icon: 'fa-list-alt', label: 'Missões & Medalhas' },
-                        { id: 'settings', icon: 'fa-save', label: 'Dados & Backup' },
-                        { id: 'profile', icon: 'fa-user-circle', label: 'Perfil do Professor' }
+                        { id: 'dashboard', icon: 'fa-chalkboard-teacher', label: 'Painel' },
+                        { id: 'schools', icon: 'fa-school', label: 'Gestor' },
+                        { id: 'catalog', icon: 'fa-list-alt', label: 'Tarefas' },
+                        { id: 'settings', icon: 'fa-save', label: 'Backup' },
+                        { id: 'profile', icon: 'fa-user-circle', label: 'Perfil' }
                     ].map(item => {
                         const isProtected = ['schools', 'profile'].includes(item.id);
 
@@ -1611,22 +1666,21 @@ export default function App() {
                         };
 
                         return (
-                            <button key={item.id} onClick={handleNavClick} className={`w-full text-left px-4 py-3 rounded-xl flex items-center justify-between transition-colors font-medium text-sm ${view === item.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
-                                <div className="flex items-center gap-3">
-                                    <i className={`fas ${item.icon} w-5 text-center`}></i> {item.label}
-                                </div>
+                            <button key={item.id} onClick={handleNavClick} className={`w-full text-left px-4 py-2.5 md:px-2 md:py-2.5 rounded-xl flex items-center md:flex-col md:justify-center gap-2 md:gap-0.5 transition-colors font-medium text-sm md:text-[10px] md:uppercase text-center ${view === item.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/50' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+                                <i className={`fas ${item.icon} text-lg md:text-lg w-5 md:w-auto text-center`}></i>
+                                <span>{item.label}</span>
                                 {isProtected && !isSchoolTabUnlocked && (
-                                    <i className="fas fa-lock text-[10px] opacity-50" title="Protegido por PIN"></i>
+                                    <i className="fas fa-lock text-[10px] opacity-50 absolute top-2 right-2" title="Protegido por PIN"></i>
                                 )}
                             </button>
                         );
                     })}
                 </nav>
-                <div className="p-4 border-t border-slate-800 flex flex-col gap-2">
-                    <button onClick={performLogout} className="w-full text-left px-4 py-2 rounded-xl flex items-center gap-3 transition-colors font-medium text-sm text-red-400 hover:bg-red-500/10">
-                        <i className="fas fa-sign-out-alt w-5 text-center"></i> Sair do Sistema
+                <div className="p-3 border-t border-slate-800">
+                    <button onClick={performLogout} className="w-full text-left px-4 py-2 md:px-2 md:py-2 rounded-xl flex items-center md:flex-col md:justify-center gap-2 md:gap-0.5 transition-colors font-medium text-sm md:text-[10px] md:uppercase text-center text-red-400 hover:bg-red-500/10">
+                        <i className="fas fa-sign-out-alt text-lg md:text-lg w-5 md:w-auto text-center"></i>
+                        <span>Sair</span>
                     </button>
-                    <p className="text-[10px] text-slate-500 text-center mt-2">Desenvolvido com Gemini AI</p>
                 </div>
             </aside>
 
@@ -1653,13 +1707,14 @@ export default function App() {
                     <CatalogView
                         data={data}
                         catalogTab={catalogTab}
-                        setCatalogTab={setCatalogTab}
+                        setCatalogTab={setCatalogTab as any}
                         setTutorialStep={setTutorialStep}
                         setShowTutorial={setShowTutorial}
                         openModal={openModal}
                         requestDelete={requestDelete}
                         setPenaltySchoolId={setPenaltySchoolId}
                         setApplyPenaltyConfig={setApplyPenaltyConfig}
+                        onSaveLevelRules={handleSaveLevelRules}
                     />
                 )}
 
@@ -1673,6 +1728,7 @@ export default function App() {
                             setSelectedSchoolId={setSelectedSchoolId}
                             setSelectedClassId={setSelectedClassId}
                             setShowBatchImport={setShowBatchImport}
+                            setShowEditStudents={setShowEditStudents}
                         />
                     )
                 }
@@ -1715,157 +1771,160 @@ export default function App() {
                             openModal={openModal}
                             giveRewards={giveRewards}
                             openStudentSettings={openStudentSettings}
-                            getLevel={getLevel}
+                            getLevel={getLevelBound}
                             profile={profile}
                         />
                     )
                 }
             </main >
 
-            {modalConfig.isOpen && (modalConfig.type === 'school-selector' || modalConfig.type === 'class-selector') && (
-                <div className="fixed inset-0 bg-slate-900/60 flex items-end md:items-center justify-center z-50 backdrop-blur-sm p-0 md:p-4 animate-fade-in" onClick={closeModal}>
-                    <div className="bg-white rounded-t-2xl md:rounded-2xl p-6 w-full md:max-w-md shadow-2xl h-[70vh] flex flex-col" onClick={e => e.stopPropagation()}>
-                        <div className="flex justify-between items-center mb-6 flex-shrink-0">
-                            <h3 className="text-xl font-bold text-slate-800">{modalConfig.type === 'school-selector' ? 'Selecionar Escola' : 'Selecionar Turma'}</h3>
-                            <button onClick={closeModal} className="w-8 h-8 flex items-center justify-center bg-slate-100 rounded-full text-slate-400 hover:text-red-500 transition-colors"><i className="fas fa-times"></i></button>
-                        </div>
-                        <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2">
-                            {modalConfig.type === 'school-selector' ? (
-                                data.schools.map(school => (
-                                    <button
-                                        key={school.id}
-                                        onClick={() => {
-                                            setSelectedSchoolId(school.id);
-                                            setSelectedClassId('');
-                                            closeModal();
-                                        }}
-                                        className={`w-full p-4 rounded-xl border-2 text-left transition-all flex items-center gap-3 ${selectedSchoolId === school.id ? 'border-indigo-500 bg-indigo-50 shadow-sm' : 'border-slate-100 hover:border-indigo-200 bg-white'}`}
-                                    >
-                                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${selectedSchoolId === school.id ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                                            <i className="fas fa-school"></i>
-                                        </div>
-                                        <span className={`font-bold ${selectedSchoolId === school.id ? 'text-indigo-900' : 'text-slate-700'}`}>{school.name}</span>
-                                    </button>
-                                ))
-                            ) : (
-                                currentSchool?.classes?.map(cls => (
-                                    <button
-                                        key={cls.id}
-                                        onClick={() => {
-                                            setSelectedClassId(cls.id);
-                                            closeModal();
-                                        }}
-                                        className={`w-full p-4 rounded-xl border-2 text-left transition-all flex items-center gap-3 ${selectedClassId === cls.id ? 'border-indigo-500 bg-indigo-50 shadow-sm' : 'border-slate-100 hover:border-indigo-200 bg-white'}`}
-                                    >
-                                        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${selectedClassId === cls.id ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                                            <i className="fas fa-chalkboard-teacher"></i>
-                                        </div>
-                                        <div className="flex-1">
-                                            <h4 className={`font-bold ${selectedClassId === cls.id ? 'text-indigo-900' : 'text-slate-700'}`}>{cls.name}</h4>
-                                            <p className="text-[10px] opacity-70 italic">{cls.students?.length || 0} alunos</p>
-                                        </div>
-                                    </button>
-                                ))
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {modalConfig.isOpen && modalConfig.type === 'mission-selector' && (
-                <div className="fixed inset-0 bg-slate-900/60 flex items-end md:items-center justify-center z-50 backdrop-blur-sm p-0 md:p-4 animate-fade-in" onClick={e => e.stopPropagation()}>
-                    <div className="bg-white rounded-t-2xl md:rounded-2xl p-6 w-full md:max-w-md shadow-2xl h-[80vh] flex flex-col">
-                        <div className="flex justify-between items-center mb-4 flex-shrink-0">
-                            <h3 className="text-xl font-bold text-slate-800">{isGivingBadge ? 'Selecionar Medalha' : 'Selecionar Atividade'}</h3>
-                            <button onClick={closeModal} className="w-8 h-8 flex items-center justify-center bg-slate-100 rounded-full text-slate-400 hover:text-red-500 transition-colors"><i className="fas fa-times text-lg"></i></button>
-                        </div>
-
-                        {/* Tabs removidas a pedido do usuário, apenas missões */}
-
-                        <div className="mb-4 flex-shrink-0">
-                            <div className="relative">
-                                <i className="fas fa-search absolute left-4 top-3.5 text-slate-400"></i>
-                                <input
-                                    type="text"
-                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-3 outline-none focus:border-indigo-500 font-bold text-slate-600"
-                                    placeholder="Buscar..."
-                                    autoFocus
-                                    onChange={(e) => setMissionSearch(e.target.value)}
-                                    value={missionSearch}
-                                />
+            {
+                modalConfig.isOpen && (modalConfig.type === 'school-selector' || modalConfig.type === 'class-selector') && (
+                    <div className="fixed inset-0 bg-slate-900/60 flex items-end md:items-center justify-center z-50 backdrop-blur-sm p-0 md:p-4 animate-fade-in" onClick={closeModal}>
+                        <div className="bg-white rounded-t-2xl md:rounded-2xl p-6 w-full md:max-w-md shadow-2xl h-[70vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                            <div className="flex justify-between items-center mb-6 flex-shrink-0">
+                                <h3 className="text-xl font-bold text-slate-800">{modalConfig.type === 'school-selector' ? 'Selecionar Escola' : 'Selecionar Turma'}</h3>
+                                <button onClick={closeModal} className="w-8 h-8 flex items-center justify-center bg-slate-100 rounded-full text-slate-400 hover:text-red-500 transition-colors"><i className="fas fa-times"></i></button>
+                            </div>
+                            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2">
+                                {modalConfig.type === 'school-selector' ? (
+                                    [...data.schools].sort((a, b) => a.name.localeCompare(b.name)).map(school => (
+                                        <button
+                                            key={school.id}
+                                            onClick={() => {
+                                                setSelectedSchoolId(school.id);
+                                                setSelectedClassId('');
+                                                closeModal();
+                                            }}
+                                            className={`w-full p-4 rounded-xl border-2 text-left transition-all flex items-center gap-3 ${selectedSchoolId === school.id ? 'border-indigo-500 bg-indigo-50 shadow-sm' : 'border-slate-100 hover:border-indigo-200 bg-white'}`}
+                                        >
+                                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${selectedSchoolId === school.id ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                                                <i className="fas fa-school"></i>
+                                            </div>
+                                            <span className={`font-bold ${selectedSchoolId === school.id ? 'text-indigo-900' : 'text-slate-700'}`}>{school.name}</span>
+                                        </button>
+                                    ))
+                                ) : (
+                                    [...(currentSchool?.classes || [])].sort((a, b) => a.name.localeCompare(b.name)).map(cls => (
+                                        <button
+                                            key={cls.id}
+                                            onClick={() => {
+                                                setSelectedClassId(cls.id);
+                                                closeModal();
+                                            }}
+                                            className={`w-full p-4 rounded-xl border-2 text-left transition-all flex items-center gap-3 ${selectedClassId === cls.id ? 'border-indigo-500 bg-indigo-50 shadow-sm' : 'border-slate-100 hover:border-indigo-200 bg-white'}`}
+                                        >
+                                            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${selectedClassId === cls.id ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                                                <i className="fas fa-chalkboard-teacher"></i>
+                                            </div>
+                                            <div className="flex-1">
+                                                <h4 className={`font-bold ${selectedClassId === cls.id ? 'text-indigo-900' : 'text-slate-700'}`}>{cls.name}</h4>
+                                                <p className="text-[10px] opacity-70 italic">{cls.students?.length || 0} alunos</p>
+                                            </div>
+                                        </button>
+                                    ))
+                                )}
                             </div>
                         </div>
+                    </div>
+                )
+            }
 
-                        <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2">
-                            <button
-                                onClick={() => {
-                                    setSelectedTaskId('');
-                                    setManualDesc('');
-                                    setCustomMissionDesc('');
-                                    setManualPoints(missionModalTab === 'penalties' ? -5 : 0);
-                                    closeModal();
-                                    openModal(isGivingBadge ? 'badge' : 'task', 'create');
-                                }}
-                                className={`w-full p-3 rounded-xl border-2 border-dashed font-bold transition-all flex items-center gap-3 ${missionModalTab === 'penalties' ? 'border-red-200 text-red-400 hover:border-red-500 hover:text-red-600' : 'border-slate-300 text-slate-500 hover:border-indigo-500 hover:text-indigo-600'}`}
-                            >
-                                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${missionModalTab === 'penalties' ? 'bg-red-50' : 'bg-slate-100'}`}>
-                                    <i className="fas fa-edit text-xs"></i>
-                                </div>
-                                <div className="text-left">
-                                    <h4 className="font-bold text-sm">Personalizado</h4>
-                                    <p className="text-[10px] opacity-70">Criar {missionModalTab === 'penalties' ? 'penalidade' : 'pontuação'} manual</p>
-                                </div>
-                            </button>
+            {
+                modalConfig.isOpen && modalConfig.type === 'mission-selector' && (
+                    <div className="fixed inset-0 bg-slate-900/60 flex items-end md:items-center justify-center z-50 backdrop-blur-sm p-0 md:p-4 animate-fade-in" onClick={e => e.stopPropagation()}>
+                        <div className="bg-white rounded-t-2xl md:rounded-2xl p-6 w-full md:max-w-md shadow-2xl h-[80vh] flex flex-col">
+                            <div className="flex justify-between items-center mb-4 flex-shrink-0">
+                                <h3 className="text-xl font-bold text-slate-800">{isGivingBadge ? 'Selecionar Medalha' : 'Selecionar Atividade'}</h3>
+                                <button onClick={closeModal} className="w-8 h-8 flex items-center justify-center bg-slate-100 rounded-full text-slate-400 hover:text-red-500 transition-colors"><i className="fas fa-times text-lg"></i></button>
+                            </div>
 
-                            {!isGivingBadge ? (
-                                data.taskCatalog
-                                    .filter(t => t.bimesters.includes(currentBimester) && t.title.toLowerCase().includes(missionSearch.toLowerCase()))
-                                    .map(task => (
+                            {/* Tabs removidas a pedido do usuário, apenas missões */}
+
+                            <div className="mb-4 flex-shrink-0">
+                                <div className="relative">
+                                    <i className="fas fa-search absolute left-4 top-3.5 text-slate-400"></i>
+                                    <input
+                                        type="text"
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-3 outline-none focus:border-indigo-500 font-bold text-slate-600"
+                                        placeholder="Buscar..."
+                                        autoFocus
+                                        onChange={(e) => setMissionSearch(e.target.value)}
+                                        value={missionSearch}
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2">
+                                <button
+                                    onClick={() => {
+                                        setSelectedTaskId('');
+                                        setManualDesc('');
+                                        setCustomMissionDesc('');
+                                        setManualPoints(missionModalTab === 'penalties' ? -5 : 0);
+                                        closeModal();
+                                        openModal(isGivingBadge ? 'badge' : 'task', 'create');
+                                    }}
+                                    className={`w-full p-3 rounded-xl border-2 border-dashed font-bold transition-all flex items-center gap-3 ${missionModalTab === 'penalties' ? 'border-red-200 text-red-400 hover:border-red-500 hover:text-red-600' : 'border-slate-300 text-slate-500 hover:border-indigo-500 hover:text-indigo-600'}`}
+                                >
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${missionModalTab === 'penalties' ? 'bg-red-50' : 'bg-slate-100'}`}>
+                                        <i className="fas fa-edit text-xs"></i>
+                                    </div>
+                                    <div className="text-left">
+                                        <h4 className="font-bold text-sm">Personalizado</h4>
+                                        <p className="text-[10px] opacity-70">Criar {missionModalTab === 'penalties' ? 'penalidade' : 'pontuação'} manual</p>
+                                    </div>
+                                </button>
+
+                                {!isGivingBadge ? (
+                                    data.taskCatalog
+                                        .filter(t => t.bimesters.includes(currentBimester) && t.title.toLowerCase().includes(missionSearch.toLowerCase()))
+                                        .map(task => (
+                                            <button
+                                                key={task.id}
+                                                onClick={() => {
+                                                    setSelectedTaskId(task.id);
+                                                    setManualDesc(task.title);
+                                                    setCustomMissionDesc(task.description);
+                                                    setManualPoints(task.defaultPoints);
+                                                    closeModal();
+                                                    setMissionSearch('');
+                                                }}
+                                                className="w-full p-3 rounded-xl border border-slate-100 hover:border-indigo-500 hover:bg-indigo-50 transition-all flex items-center justify-between group text-left"
+                                            >
+                                                <div>
+                                                    <h4 className="font-bold text-sm text-slate-700 group-hover:text-indigo-700">{task.title}</h4>
+                                                    <p className="text-[10px] text-slate-400 line-clamp-1">{task.description}</p>
+                                                </div>
+                                                <div className="font-bold text-indigo-600 bg-indigo-100 px-2 py-1 rounded text-[10px]">{task.defaultPoints} pts</div>
+                                            </button>
+                                        ))
+                                ) : (
+                                    data.badgesCatalog.filter(b => b.bimesters.includes(currentBimester) && b.name.toLowerCase().includes(missionSearch.toLowerCase())).map(badge => (
                                         <button
-                                            key={task.id}
+                                            key={badge.id}
                                             onClick={() => {
-                                                setSelectedTaskId(task.id);
-                                                setManualDesc(task.title);
-                                                setCustomMissionDesc(task.description);
-                                                setManualPoints(task.defaultPoints);
+                                                setSelectedTaskId(badge.id);
+                                                setCustomMissionDesc(badge.description);
                                                 closeModal();
                                                 setMissionSearch('');
                                             }}
-                                            className="w-full p-3 rounded-xl border border-slate-100 hover:border-indigo-500 hover:bg-indigo-50 transition-all flex items-center justify-between group text-left"
+                                            className="w-full p-3 rounded-xl border border-slate-100 hover:border-amber-500 hover:bg-amber-50 transition-all flex items-center gap-3 group text-left"
                                         >
-                                            <div>
-                                                <h4 className="font-bold text-sm text-slate-700 group-hover:text-indigo-700">{task.title}</h4>
-                                                <p className="text-[10px] text-slate-400 line-clamp-1">{task.description}</p>
+                                            <div className="w-8 h-8 rounded-full bg-amber-100 text-amber-500 flex items-center justify-center text-sm">
+                                                <i className={`fas ${badge.icon}`}></i>
                                             </div>
-                                            <div className="font-bold text-indigo-600 bg-indigo-100 px-2 py-1 rounded text-[10px]">{task.defaultPoints} pts</div>
+                                            <div>
+                                                <h4 className="font-bold text-sm text-slate-700 group-hover:text-amber-700">{badge.name}</h4>
+                                                <p className="text-[10px] text-slate-400 line-clamp-1">{badge.description}</p>
+                                            </div>
                                         </button>
                                     ))
-                            ) : (
-                                data.badgesCatalog.filter(b => b.bimesters.includes(currentBimester) && b.name.toLowerCase().includes(missionSearch.toLowerCase())).map(badge => (
-                                    <button
-                                        key={badge.id}
-                                        onClick={() => {
-                                            setSelectedTaskId(badge.id);
-                                            setCustomMissionDesc(badge.description);
-                                            closeModal();
-                                            setMissionSearch('');
-                                        }}
-                                        className="w-full p-3 rounded-xl border border-slate-100 hover:border-amber-500 hover:bg-amber-50 transition-all flex items-center gap-3 group text-left"
-                                    >
-                                        <div className="w-8 h-8 rounded-full bg-amber-100 text-amber-500 flex items-center justify-center text-sm">
-                                            <i className={`fas ${badge.icon}`}></i>
-                                        </div>
-                                        <div>
-                                            <h4 className="font-bold text-sm text-slate-700 group-hover:text-amber-700">{badge.name}</h4>
-                                            <p className="text-[10px] text-slate-400 line-clamp-1">{badge.description}</p>
-                                        </div>
-                                    </button>
-                                ))
-                            )}
+                                )}
+                            </div>
                         </div>
-                    </div>
-                </div >
-            )
+                    </div >
+                )
             }
 
             {
@@ -1962,19 +2021,55 @@ export default function App() {
                         )}
 
                         {modalConfig.type === 'task' && (
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Pontos (LXC) [-10 a 250]</label>
-                                <input
-                                    type="number"
-                                    min="-10"
-                                    max="250"
-                                    value={formData.points}
-                                    onChange={(e: any) => {
-                                        let val = parseInt(e.target.value) || 0;
-                                        setFormData({ ...formData, points: Math.min(250, Math.max(-10, val)) });
-                                    }}
-                                    className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
-                                />
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Categoria da Missão</label>
+                                    <select
+                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors cursor-pointer"
+                                        value={formData.category || 'Custom'}
+                                        onChange={(e: any) => {
+                                            const cat = e.target.value;
+                                            setFormData(prev => {
+                                                let newPoints = prev.points;
+                                                if (cat === 'Daily') newPoints = 20;
+                                                else if (cat === 'Weekly') newPoints = 50;
+                                                else if (cat === 'Side Quest') newPoints = 10;
+                                                else if (cat === 'Boss') newPoints = 100;
+                                                else newPoints = 10; // Custom (Tarefa Rápida)
+                                                return { ...prev, category: cat, points: newPoints };
+                                            });
+                                        }}
+                                    >
+                                        <option value="Daily">Missão Diária — padrão 20 LXC (10–100)</option>
+                                        <option value="Weekly">Missão Semanal — padrão 50 LXC (20–200)</option>
+                                        <option value="Side Quest">Side Quest — padrão 10 LXC (5–50)</option>
+                                        <option value="Boss">Missão Principal (Boss) — padrão 100 LXC (50–250)</option>
+                                        <option value="Custom">— Tarefa Rápida — padrão 10 LXC (5–100)</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                                        {formData.category === 'Daily' ? 'Pontos (10–100)' :
+                                            formData.category === 'Weekly' ? 'Pontos (20–200)' :
+                                                formData.category === 'Side Quest' ? 'Pontos (5–50)' :
+                                                    formData.category === 'Boss' ? 'Pontos (50–250)' :
+                                                        'Pontos (5–100)'}
+                                    </label>
+                                    <input
+                                        type="number"
+                                        min={formData.category === 'Daily' ? 10 : formData.category === 'Weekly' ? 20 : formData.category === 'Side Quest' ? 5 : formData.category === 'Boss' ? 50 : 5}
+                                        max={formData.category === 'Daily' ? 100 : formData.category === 'Weekly' ? 200 : formData.category === 'Side Quest' ? 50 : formData.category === 'Boss' ? 250 : 100}
+                                        value={formData.points}
+                                        onChange={(e: any) => {
+                                            let val = parseInt(e.target.value) || 0;
+                                            const cat = formData.category || 'Custom';
+                                            const minP = cat === 'Daily' ? 10 : cat === 'Weekly' ? 20 : cat === 'Side Quest' ? 5 : cat === 'Boss' ? 50 : 5;
+                                            const maxP = cat === 'Daily' ? 100 : cat === 'Weekly' ? 200 : cat === 'Side Quest' ? 50 : cat === 'Boss' ? 250 : 100;
+                                            setFormData({ ...formData, points: Math.min(maxP, Math.max(minP, val)) });
+                                        }}
+                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
+                                    />
+                                </div>
                             </div>
                         )}
 
@@ -2129,106 +2224,108 @@ export default function App() {
             }
 
             {/* --- TUTORIAL MODAL --- */}
-            {showTutorial && (
-                <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md overflow-hidden animate-scale-up border-4 border-indigo-100 flex flex-col">
-                        <div className="bg-indigo-600 p-6 text-white text-center relative">
-                            <button onClick={() => setShowTutorial(false)} className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/40 transition-colors"><i className="fas fa-times"></i></button>
-                            <i className="fas fa-graduation-cap text-4xl mb-3 text-indigo-300"></i>
-                            <h2 className="text-xl font-black gamified-font">Guia de Catálogo</h2>
-                            <p className="text-xs opacity-80 mt-1">Passo {tutorialStep} de 3</p>
-                        </div>
+            {
+                showTutorial && (
+                    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                        <div className="bg-white rounded-[2rem] shadow-2xl w-full max-w-md overflow-hidden animate-scale-up border-4 border-indigo-100 flex flex-col">
+                            <div className="bg-indigo-600 p-6 text-white text-center relative">
+                                <button onClick={() => setShowTutorial(false)} className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full bg-white/20 hover:bg-white/40 transition-colors"><i className="fas fa-times"></i></button>
+                                <i className="fas fa-graduation-cap text-4xl mb-3 text-indigo-300"></i>
+                                <h2 className="text-xl font-black gamified-font">Guia de Catálogo</h2>
+                                <p className="text-xs opacity-80 mt-1">Passo {tutorialStep} de 3</p>
+                            </div>
 
-                        <div className="p-6 text-slate-600 text-sm space-y-4 flex-1">
-                            {tutorialStep === 1 && (
-                                <div className="animate-fade-in text-center">
-                                    <div className="w-16 h-16 bg-blue-100 text-blue-500 rounded-full flex items-center justify-center text-3xl mx-auto mb-4"><i className="fas fa-tasks"></i></div>
-                                    <h3 className="font-bold text-lg text-slate-800 mb-2">1. Missões (LXC)</h3>
-                                    <p>São as tarefas do dia a dia. Ao completá-las, o aluno ganha <strong>LXC</strong> (experiência). Defina pontos baseados no esforço.</p>
-                                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 mt-4 text-left">
-                                        <p className="font-bold text-xs text-slate-700">Exemplo Padrão:</p>
-                                        <p className="text-indigo-600 font-bold"><i className="fas fa-check-circle"></i> "Side Quest 01" (+50 LXC)</p>
-                                        <p className="text-[10px] text-slate-500 mt-1">Tarefa opcional para incentivar pesquisa em casa.</p>
+                            <div className="p-6 text-slate-600 text-sm space-y-4 flex-1">
+                                {tutorialStep === 1 && (
+                                    <div className="animate-fade-in text-center">
+                                        <div className="w-16 h-16 bg-blue-100 text-blue-500 rounded-full flex items-center justify-center text-3xl mx-auto mb-4"><i className="fas fa-tasks"></i></div>
+                                        <h3 className="font-bold text-lg text-slate-800 mb-2">1. Missões (LXC)</h3>
+                                        <p>São as tarefas do dia a dia. Ao completá-las, o aluno ganha <strong>LXC</strong> (experiência). Defina pontos baseados no esforço.</p>
+                                        <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 mt-4 text-left">
+                                            <p className="font-bold text-xs text-slate-700">Exemplo Padrão:</p>
+                                            <p className="text-indigo-600 font-bold"><i className="fas fa-check-circle"></i> "Side Quest 01" (+50 LXC)</p>
+                                            <p className="text-[10px] text-slate-500 mt-1">Tarefa opcional para incentivar pesquisa em casa.</p>
+                                        </div>
                                     </div>
-                                </div>
-                            )}
+                                )}
 
-                            {tutorialStep === 2 && (
-                                <div className="animate-fade-in text-center">
-                                    <div className="w-16 h-16 bg-amber-100 text-amber-500 rounded-full flex items-center justify-center text-3xl mx-auto mb-4"><i className="fas fa-medal"></i></div>
-                                    <h3 className="font-bold text-lg text-slate-800 mb-2">2. Medalhas & Conquistas</h3>
-                                    <p>As medalhas são conquistas especiais que os alunos colecionam no perfil. Podem (ou não) dar bônus extra de LXC.</p>
-                                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 mt-4 text-left">
-                                        <p className="font-bold text-xs text-slate-700">Exemplo Padrão:</p>
-                                        <p className="text-amber-500 font-bold"><i className="fas fa-hands-helping"></i> "Ajudante da Vez"</p>
-                                        <p className="text-[10px] text-slate-500 mt-1">Concedida a quem ajudou o professor a organizar a sala.</p>
+                                {tutorialStep === 2 && (
+                                    <div className="animate-fade-in text-center">
+                                        <div className="w-16 h-16 bg-amber-100 text-amber-500 rounded-full flex items-center justify-center text-3xl mx-auto mb-4"><i className="fas fa-medal"></i></div>
+                                        <h3 className="font-bold text-lg text-slate-800 mb-2">2. Medalhas & Conquistas</h3>
+                                        <p>As medalhas são conquistas especiais que os alunos colecionam no perfil. Podem (ou não) dar bônus extra de LXC.</p>
+                                        <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 mt-4 text-left">
+                                            <p className="font-bold text-xs text-slate-700">Exemplo Padrão:</p>
+                                            <p className="text-amber-500 font-bold"><i className="fas fa-hands-helping"></i> "Ajudante da Vez"</p>
+                                            <p className="text-[10px] text-slate-500 mt-1">Concedida a quem ajudou o professor a organizar a sala.</p>
+                                        </div>
                                     </div>
-                                </div>
-                            )}
+                                )}
 
-                            {tutorialStep === 3 && (
-                                <div className="animate-fade-in text-center">
-                                    <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center text-3xl mx-auto mb-4"><i className="fas fa-gavel"></i></div>
-                                    <h3 className="font-bold text-lg text-slate-800 mb-2">3. Penalidades</h3>
-                                    <p>Usadas para corrigir comportamentos inadequados. Elas <strong>subtraem LXC</strong> do saldo do aluno no bimestre atual.</p>
-                                    <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 mt-4 text-left">
-                                        <p className="font-bold text-xs text-slate-700">Exemplo Padrão:</p>
-                                        <p className="text-red-500 font-bold"><i className="fas fa-exclamation-triangle"></i> "Desrespeito" (-30 LXC)</p>
-                                        <p className="text-[10px] text-slate-500 mt-1">Falta grave contra colegas ou o educador.</p>
+                                {tutorialStep === 3 && (
+                                    <div className="animate-fade-in text-center">
+                                        <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center text-3xl mx-auto mb-4"><i className="fas fa-gavel"></i></div>
+                                        <h3 className="font-bold text-lg text-slate-800 mb-2">3. Penalidades</h3>
+                                        <p>Usadas para corrigir comportamentos inadequados. Elas <strong>subtraem LXC</strong> do saldo do aluno no bimestre atual.</p>
+                                        <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 mt-4 text-left">
+                                            <p className="font-bold text-xs text-slate-700">Exemplo Padrão:</p>
+                                            <p className="text-red-500 font-bold"><i className="fas fa-exclamation-triangle"></i> "Desrespeito" (-30 LXC)</p>
+                                            <p className="text-[10px] text-slate-500 mt-1">Falta grave contra colegas ou o educador.</p>
+                                        </div>
                                     </div>
-                                </div>
-                            )}
-                        </div>
+                                )}
+                            </div>
 
-                        <div className="bg-slate-50 p-4 border-t border-slate-100 flex justify-between gap-3">
-                            <Button
-                                variant="secondary"
-                                onClick={() => setShowTutorial(false)}
-                                className="text-xs font-bold px-4"
-                            >
-                                Pular
-                            </Button>
-
-                            {tutorialStep < 3 ? (
-                                <Button onClick={() => setTutorialStep(prev => prev + 1)} className="flex-1 text-xs">
-                                    Próximo <i className="fas fa-arrow-right ml-1"></i>
-                                </Button>
-                            ) : (
+                            <div className="bg-slate-50 p-4 border-t border-slate-100 flex justify-between gap-3">
                                 <Button
-                                    onClick={() => {
-                                        setShowTutorial(false);
-                                        // Auto-populate se tiver vazio
-                                        if (data.taskCatalog.length === 0 && data.badgesCatalog.length === 0 && data.penaltiesCatalog.length === 0) {
-                                            const newData = JSON.parse(JSON.stringify(data));
-                                            const uid = auth.currentUser?.uid;
-
-                                            const t1: TaskDefinition = { id: uuidv4(), title: 'Side Quest 01', description: 'Tarefa opcional para incentivar pesquisa em casa', defaultPoints: 50, bimesters: [currentBimester] };
-                                            const b1: Badge = { id: uuidv4(), name: 'Ajudante da Vez', description: 'Concedida a quem ajudou o professor a organizar a sala', icon: 'fa-hands-helping', rewardValue: 0, bimesters: [1, 2, 3, 4] };
-                                            const p1: PenaltyDefinition = { id: uuidv4(), title: 'Desrespeito', description: 'Falta grave contra colegas ou o educador', defaultPoints: -30, bimesters: [1, 2, 3, 4] };
-
-                                            newData.taskCatalog.push(t1);
-                                            newData.badgesCatalog.push(b1);
-                                            newData.penaltiesCatalog.push(p1);
-
-                                            setData(newData);
-                                            saveData(newData);
-
-                                            if (uid) {
-                                                firestoreAddCatalogItem(uid, 'task', t1);
-                                                firestoreAddCatalogItem(uid, 'badge', b1);
-                                                firestoreAddCatalogItem(uid, 'penalty', p1);
-                                            }
-                                        }
-                                    }}
-                                    className="flex-1 text-xs bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/30"
+                                    variant="secondary"
+                                    onClick={() => setShowTutorial(false)}
+                                    className="text-xs font-bold px-4"
                                 >
-                                    <i className="fas fa-check mr-1"></i> Entendi
+                                    Pular
                                 </Button>
-                            )}
+
+                                {tutorialStep < 3 ? (
+                                    <Button onClick={() => setTutorialStep(prev => prev + 1)} className="flex-1 text-xs">
+                                        Próximo <i className="fas fa-arrow-right ml-1"></i>
+                                    </Button>
+                                ) : (
+                                    <Button
+                                        onClick={() => {
+                                            setShowTutorial(false);
+                                            // Auto-populate se tiver vazio
+                                            if (data.taskCatalog.length === 0 && data.badgesCatalog.length === 0 && data.penaltiesCatalog.length === 0) {
+                                                const newData = JSON.parse(JSON.stringify(data));
+                                                const uid = auth.currentUser?.uid;
+
+                                                const t1: TaskDefinition = { id: uuidv4(), title: 'Side Quest 01', description: 'Tarefa opcional para incentivar pesquisa em casa', defaultPoints: 50, bimesters: [currentBimester] };
+                                                const b1: Badge = { id: uuidv4(), name: 'Ajudante da Vez', description: 'Concedida a quem ajudou o professor a organizar a sala', icon: 'fa-hands-helping', rewardValue: 0, bimesters: [1, 2, 3, 4] };
+                                                const p1: PenaltyDefinition = { id: uuidv4(), title: 'Desrespeito', description: 'Falta grave contra colegas ou o educador', defaultPoints: -30, bimesters: [1, 2, 3, 4] };
+
+                                                newData.taskCatalog.push(t1);
+                                                newData.badgesCatalog.push(b1);
+                                                newData.penaltiesCatalog.push(p1);
+
+                                                setData(newData);
+                                                saveData(newData);
+
+                                                if (uid) {
+                                                    firestoreAddCatalogItem(uid, 'task', t1);
+                                                    firestoreAddCatalogItem(uid, 'badge', b1);
+                                                    firestoreAddCatalogItem(uid, 'penalty', p1);
+                                                }
+                                            }
+                                        }}
+                                        className="flex-1 text-xs bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/30"
+                                    >
+                                        <i className="fas fa-check mr-1"></i> Entendi
+                                    </Button>
+                                )}
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
 
 
@@ -2434,6 +2531,14 @@ export default function App() {
             />
 
             {showBatchImport && <BatchStudentModal onClose={() => setShowBatchImport(false)} onSave={batchImportStudents} />}
+            {showEditStudents && <EditStudentsModal
+                isOpen={showEditStudents}
+                onClose={() => setShowEditStudents(false)}
+                onSave={handleSaveEditStudents}
+                initialStudents={data.schools.find(s => s.id === selectedSchoolId)?.classes?.find(c => c.id === selectedClassId)?.students || []}
+                schoolId={selectedSchoolId}
+                classId={selectedClassId}
+            />}
 
             {
                 applyPenaltyConfig.isOpen && (
@@ -2518,86 +2623,89 @@ export default function App() {
                 )
             }
 
-            {pinModalConfig.isOpen && (
-                <GenericModal
-                    title="Acesso Protegido"
-                    onClose={() => {
-                        setPinModalConfig({ isOpen: false, targetView: null });
-                        setPinInput('');
-                        setPinError('');
-                    }}
-                    showFooter={false}
-                >
-                    <div className="text-center py-4">
-                        <div className={`w-16 h-16 ${lockoutTime > 0 ? 'bg-red-100 text-red-500' : 'bg-amber-100 text-amber-500'} rounded-full flex items-center justify-center mx-auto mb-4 text-2xl animate-pulse`}>
-                            <i className={`fas ${lockoutTime > 0 ? 'fa-hourglass-half' : 'fa-lock'}`}></i>
-                        </div>
-                        <h4 className="font-bold text-slate-700 mb-2">Digite o PIN do Professor</h4>
-                        <p className="text-xs text-slate-500 mb-6 px-4">Esta área contém configurações sensíveis e requer autorização.</p>
+            {
+                pinModalConfig.isOpen && (
+                    <GenericModal
+                        title="Acesso Protegido"
+                        onClose={() => {
+                            setPinModalConfig({ isOpen: false, targetView: null });
+                            setPinInput('');
+                            setPinError('');
+                        }}
+                        showFooter={false}
+                    >
+                        <div className="text-center py-4">
+                            <div className={`w-16 h-16 ${lockoutTime > 0 ? 'bg-red-100 text-red-500' : 'bg-amber-100 text-amber-500'} rounded-full flex items-center justify-center mx-auto mb-4 text-2xl animate-pulse`}>
+                                <i className={`fas ${lockoutTime > 0 ? 'fa-hourglass-half' : 'fa-lock'}`}></i>
+                            </div>
+                            <h4 className="font-bold text-slate-700 mb-2">Digite o PIN do Professor</h4>
+                            <p className="text-xs text-slate-500 mb-6 px-4">Esta área contém configurações sensíveis e requer autorização.</p>
 
-                        <div className="flex flex-col items-center gap-4 max-w-xs mx-auto">
-                            <div className="relative w-full">
-                                <input
-                                    type="password"
-                                    className={`w-full text-center tracking-[1em] font-bold text-3xl py-4 border-2 rounded-2xl outline-none transition-all ${lockoutTime > 0 ? 'bg-slate-50 border-slate-200 cursor-not-allowed opacity-50' : 'bg-white border-slate-200 focus:border-indigo-500'}`}
-                                    maxLength={4}
-                                    value={pinInput}
-                                    onChange={e => {
-                                        if (lockoutTime > 0) return;
-                                        const val = e.target.value.replace(/\D/g, '');
-                                        setPinInput(val);
-                                        setPinError('');
-                                    }}
-                                    disabled={lockoutTime > 0}
-                                    autoFocus
-                                    placeholder="••••"
-                                />
-                                {lockoutTime > 0 && (
-                                    <div className="absolute inset-0 flex items-center justify-center bg-white/10 backdrop-blur-[1px] rounded-2xl">
-                                        <span className="bg-red-500 text-white px-3 py-1 rounded-full text-xs font-black animate-bounce shadow-lg">
-                                            Aguarde {lockoutTime}s
-                                        </span>
-                                    </div>
+                            <div className="flex flex-col items-center gap-4 max-w-xs mx-auto">
+                                <div className="relative w-full">
+                                    <input
+                                        type="password"
+                                        className={`w-full text-center tracking-[1em] font-bold text-3xl py-4 border-2 rounded-2xl outline-none transition-all ${lockoutTime > 0 ? 'bg-slate-50 border-slate-200 cursor-not-allowed opacity-50' : 'bg-white border-slate-200 focus:border-indigo-500'}`}
+                                        maxLength={4}
+                                        value={pinInput}
+                                        onChange={e => {
+                                            if (lockoutTime > 0) return;
+                                            const val = e.target.value.replace(/\D/g, '');
+                                            setPinInput(val);
+                                            setPinError('');
+                                        }}
+                                        disabled={lockoutTime > 0}
+                                        autoFocus
+                                        placeholder="••••"
+                                    />
+                                    {lockoutTime > 0 && (
+                                        <div className="absolute inset-0 flex items-center justify-center bg-white/10 backdrop-blur-[1px] rounded-2xl">
+                                            <span className="bg-red-500 text-white px-3 py-1 rounded-full text-xs font-black animate-bounce shadow-lg">
+                                                Aguarde {lockoutTime}s
+                                            </span>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {pinError && (
+                                    <p className={`text-xs font-bold p-2 rounded-lg w-full ${lockoutTime > 0 ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-500'}`}>
+                                        <i className="fas fa-info-circle mr-1"></i>
+                                        {pinError}
+                                    </p>
+                                )}
+
+                                {(!profile.pin || profile.pin === '0000') && lockoutTime === 0 && (
+                                    <p className="text-[10px] text-slate-400 mt-2 italic px-2">
+                                        <i className="fas fa-lightbulb text-amber-400 mr-1"></i>
+                                        Dica: O PIN padrão é 0000. Altere no perfil.
+                                    </p>
                                 )}
                             </div>
-
-                            {pinError && (
-                                <p className={`text-xs font-bold p-2 rounded-lg w-full ${lockoutTime > 0 ? 'bg-red-50 text-red-600' : 'bg-slate-50 text-slate-500'}`}>
-                                    <i className="fas fa-info-circle mr-1"></i>
-                                    {pinError}
-                                </p>
-                            )}
-
-                            {(!profile.pin || profile.pin === '0000') && lockoutTime === 0 && (
-                                <p className="text-[10px] text-slate-400 mt-2 italic px-2">
-                                    <i className="fas fa-lightbulb text-amber-400 mr-1"></i>
-                                    Dica: O PIN padrão é 0000. Altere no perfil.
-                                </p>
-                            )}
                         </div>
-                    </div>
-                </GenericModal>
-            )
+                    </GenericModal>
+                )
             }
 
             {/* --- TOAST NOTIFICATION --- */}
-            {notification.isOpen && (
-                <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[100] animate-bounce-in`}>
-                    <div className={`flex items-center gap-3 px-6 py-3 rounded-2xl shadow-2xl border-2 ${notification.type === 'success' ? 'bg-emerald-50 border-emerald-100 text-emerald-700' :
-                        notification.type === 'error' ? 'bg-red-50 border-red-100 text-red-700' :
-                            'bg-indigo-50 border-indigo-100 text-indigo-700'
-                        }`}>
-                        <i className={`fas ${notification.type === 'success' ? 'fa-check-circle' :
-                            notification.type === 'error' ? 'fa-exclamation-circle' :
-                                'fa-info-circle'
-                            }`}></i>
-                        <span className="font-bold text-sm tracking-tight">{notification.message}</span>
-                        <button onClick={() => setNotification(prev => ({ ...prev, isOpen: false }))} className="ml-2 hover:opacity-70 transition-opacity">
-                            <i className="fas fa-times"></i>
-                        </button>
+            {
+                notification.isOpen && (
+                    <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-[100] animate-bounce-in`}>
+                        <div className={`flex items-center gap-3 px-6 py-3 rounded-2xl shadow-2xl border-2 ${notification.type === 'success' ? 'bg-emerald-50 border-emerald-100 text-emerald-700' :
+                            notification.type === 'error' ? 'bg-red-50 border-red-100 text-red-700' :
+                                'bg-indigo-50 border-indigo-100 text-indigo-700'
+                            }`}>
+                            <i className={`fas ${notification.type === 'success' ? 'fa-check-circle' :
+                                notification.type === 'error' ? 'fa-exclamation-circle' :
+                                    'fa-info-circle'
+                                }`}></i>
+                            <span className="font-bold text-sm tracking-tight">{notification.message}</span>
+                            <button onClick={() => setNotification(prev => ({ ...prev, isOpen: false }))} className="ml-2 hover:opacity-70 transition-opacity">
+                                <i className="fas fa-times"></i>
+                            </button>
+                        </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
         </div >
     );

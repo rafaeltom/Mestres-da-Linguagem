@@ -38,6 +38,17 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ profile, handleProfile
                     </div>
 
                     <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">E-mail (Vínculo da Conta)</label>
+                        <input
+                            type="email"
+                            value={profile.email || ''}
+                            className="w-full bg-slate-100 border border-slate-200 rounded-xl p-3 outline-none cursor-not-allowed text-slate-500 font-medium"
+                            readOnly
+                            title="O e-mail é fixo e vinculado à sua autenticação."
+                        />
+                    </div>
+
+                    <div>
                         <div className="flex items-center gap-2 mb-1">
                             <label className="block text-xs font-bold text-slate-500 uppercase">Nome de Exibição / Sigla</label>
                             <div className="group relative inline-block text-slate-400 cursor-help">

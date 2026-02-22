@@ -1,7 +1,19 @@
-import React, { ReactNode } from 'react';
-import { Button, Input } from '../ui/SharedUI';
-import { School, ClassGroup, Bimester } from '../../types';
+import React, { ReactNode, useMemo } from 'react';
+import { Button } from '../ui/SharedUI';
+import { School, ClassGroup, Bimester, TaskDefinition } from '../../types';
 import { AppData } from '../../services/localStorageService';
+
+// Category-specific settings
+const CATEGORY_CONFIG: Record<string, { label: string; icon: string; color: string; default: number; min: number; max: number }> = {
+    'Daily': { label: 'Missão Diária', icon: 'fa-sun', color: 'text-sky-500', default: 20, min: 10, max: 100 },
+    'Weekly': { label: 'Missão Semanal', icon: 'fa-calendar-week', color: 'text-purple-500', default: 50, min: 20, max: 200 },
+    'Side Quest': { label: 'Side Quest', icon: 'fa-map-signs', color: 'text-emerald-500', default: 10, min: 5, max: 50 },
+    'Boss': { label: 'Missão Principal', icon: 'fa-dragon', color: 'text-rose-500', default: 100, min: 50, max: 250 },
+    'Custom': { label: '— Tarefa Rápida —', icon: 'fa-cogs', color: 'text-slate-500', default: 10, min: 5, max: 100 },
+};
+
+const getTaskCategory = (task?: TaskDefinition) => task?.category || 'Custom';
+const getCatConfig = (task?: TaskDefinition) => CATEGORY_CONFIG[getTaskCategory(task)] || CATEGORY_CONFIG['Custom'];
 
 export interface DashboardViewProps {
     currentSchool: School | undefined;
@@ -54,21 +66,30 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setView, setViewingStudentId, pendingDeleteStudentId, setPendingDeleteStudentId,
     requestDelete, openModal, giveRewards, openStudentSettings, getLevel, profile
 }) => {
+    // Derive selected task object to use category metadata
+    const selectedTask = useMemo(() =>
+        isGivingBadge ? undefined : (selectedTaskId ? data.taskCatalog.find(t => t.id === selectedTaskId) : undefined),
+        [isGivingBadge, selectedTaskId, data.taskCatalog]
+    );
+    const catConfig = useMemo(() => getCatConfig(selectedTask), [selectedTask]);
+    const pointMin = catConfig.min;
+    const pointMax = catConfig.max;
+
     return (
         <div className="flex flex-col h-full animate-fade-in">
             <div className="flex flex-col md:flex-row items-center gap-4 mb-4 md:mb-6 bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
-                <div className="flex-1 w-full md:w-auto">
+                <div className="w-full md:w-36 lg:w-48 flex-shrink-0">
                     <label className="text-[10px] font-bold text-slate-400 uppercase">Escola</label>
                     <button
                         onClick={() => setModalConfig({ isOpen: true, type: 'school-selector', mode: 'create' })}
-                        className="w-full flex items-center justify-between py-1 font-bold text-slate-800 group"
+                        className="w-full flex items-center justify-between py-1 text-sm font-bold text-slate-800 group"
                     >
-                        <span className="truncate group-hover:text-indigo-600 transition-colors">{currentSchool?.name || 'Selecione a Escola...'}</span>
-                        <i className="fas fa-chevron-down text-[10px] opacity-30 group-hover:opacity-100 transition-all"></i>
+                        <span className="truncate group-hover:text-indigo-600 transition-colors block text-left" title={currentSchool?.name || 'Selecione a Escola...'}>{currentSchool?.name || 'Selecione a Escola...'}</span>
+                        <i className="fas fa-chevron-down text-[10px] opacity-30 group-hover:opacity-100 transition-all ml-1 flex-shrink-0"></i>
                     </button>
                 </div>
-                <div className="hidden md:block w-px h-8 bg-slate-200"></div>
-                <div className="flex-1 w-full md:w-auto border-t md:border-t-0 border-slate-100 pt-2 md:pt-0">
+                <div className="hidden md:block w-px h-8 bg-slate-200 flex-shrink-0"></div>
+                <div className="w-full md:w-36 lg:w-40 flex-shrink-0 border-t md:border-t-0 border-slate-100 pt-2 md:pt-0">
                     <label className="text-[10px] font-bold text-slate-400 uppercase">Turma</label>
                     <button
                         onClick={() => {
@@ -78,10 +99,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                             }
                             setModalConfig({ isOpen: true, type: 'class-selector', mode: 'create' });
                         }}
-                        className="w-full flex items-center justify-between py-1 font-bold text-slate-800 group"
+                        className="w-full flex items-center justify-between py-1 text-sm font-bold text-slate-800 group"
                     >
-                        <span className="truncate group-hover:text-indigo-600 transition-colors">{currentClass?.name || 'Selecione a Turma...'}</span>
-                        <i className="fas fa-chevron-down text-[10px] opacity-30 group-hover:opacity-100 transition-all"></i>
+                        <span className="truncate group-hover:text-indigo-600 transition-colors block text-left" title={currentClass?.name || 'Selecione a Turma...'}>{currentClass?.name || 'Selecione a Turma...'}</span>
+                        <i className="fas fa-chevron-down text-[10px] opacity-30 group-hover:opacity-100 transition-all ml-1 flex-shrink-0"></i>
                     </button>
                 </div>
                 <div className="flex bg-slate-100 rounded-lg p-1 w-full md:w-auto overflow-x-auto justify-between md:justify-start mt-2 md:mt-0">
@@ -134,6 +155,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                             <i className="fas fa-times-circle"></i>
                                         </button>
                                     )}
+                                </div>
+                                <div className="bg-indigo-50 px-3 py-1.5 rounded-lg flex justify-between items-center gap-2 border border-indigo-100">
+                                    <span className="text-[10px] font-bold text-indigo-800 uppercase tracking-wide">Selecionados</span>
+                                    <span className="bg-white text-indigo-600 px-2 rounded text-[10px] font-bold shadow-sm">{selectedStudentsForTask.length}</span>
                                 </div>
                             </div>
                         </div>
@@ -208,9 +233,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                                         className={`w-14 text-center border-b-2 bg-transparent font-bold text-sm outline-none ${(individualScores[student.id] ?? manualPoints) < 0 ? 'text-red-500 border-red-200 focus:border-red-400' : 'text-indigo-600 border-indigo-200 focus:border-indigo-400'
                                                             } custom-number-input transition-colors`}
                                                         value={individualScores[student.id] ?? manualPoints}
+                                                        min={pointMin}
+                                                        max={pointMax}
                                                         onChange={(e) => {
                                                             let val = parseInt(e.target.value) || 0;
-                                                            setIndividualScores(prev => ({ ...prev, [student.id]: Math.min(250, Math.max(-10, val)) }));
+                                                            setIndividualScores(prev => ({ ...prev, [student.id]: Math.min(pointMax, Math.max(pointMin, val)) }));
                                                         }}
                                                     />
                                                 </div>
@@ -245,39 +272,51 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </div>
                     </div>
 
-                    <div className="w-full lg:w-80 bg-white rounded-3xl border border-slate-200 p-6 flex flex-col shadow-xl shadow-slate-200/50 lg:h-full h-auto flex-shrink-0">
-                        <div className="flex bg-slate-100 rounded-xl p-1 mb-6">
-                            <button onClick={() => setIsGivingBadge(false)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${!isGivingBadge ? 'bg-white shadow text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}>Dar Pontos</button>
-                            <button onClick={() => setIsGivingBadge(true)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${isGivingBadge ? 'bg-white shadow text-amber-500' : 'text-slate-400 hover:text-slate-600'}`}>Dar Medalha</button>
+                    <div className="w-full lg:w-72 xl:w-80 bg-white rounded-3xl border border-slate-200 p-4 xl:p-5 flex flex-col shadow-xl shadow-slate-200/50 lg:h-full h-[580px] flex-shrink-0">
+                        <div className="flex bg-slate-100 rounded-xl p-1 mb-4 xl:mb-5">
+                            <button onClick={() => setIsGivingBadge(false)} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${!isGivingBadge ? 'bg-white shadow text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}>Dar Pontos</button>
+                            <button onClick={() => setIsGivingBadge(true)} className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all ${isGivingBadge ? 'bg-white shadow text-amber-500' : 'text-slate-400 hover:text-slate-600'}`}>Dar Medalha</button>
                         </div>
 
-                        <div className="mb-4">
-                            <div className="flex justify-between items-center mb-2">
-                                <span className="text-xs font-bold text-slate-400 uppercase">
-                                    {isGivingBadge ? 'Escolher Medalha' : 'Escolher Missão'}
+                        <div className="mb-3">
+                            <div className="flex justify-between items-center mb-1.5">
+                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">
+                                    {isGivingBadge ? 'Escolher Medalha' : 'Categoria da tarefa'}
                                 </span>
-                                <button onClick={() => openModal(isGivingBadge ? 'badge' : 'task', 'create')} className="text-[10px] text-indigo-500 font-bold hover:underline">+ Criar Nova</button>
+                                <button onClick={() => openModal(isGivingBadge ? 'badge' : 'task', 'create')} className="text-[10px] text-indigo-500 font-bold hover:underline bg-indigo-50 px-2 py-0.5 rounded-md">+ Novo</button>
                             </div>
 
                             <button
                                 onClick={() => setModalConfig({ isOpen: true, type: 'mission-selector', mode: 'create' })}
-                                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none hover:border-indigo-500 text-left flex justify-between items-center"
+                                className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none hover:border-indigo-500 text-left flex justify-between items-center transition-colors"
                             >
-                                <span className="truncate">{selectedTaskId ? (isGivingBadge ? data.badgesCatalog.find(b => b.id === selectedTaskId)?.name : data.taskCatalog.find(t => t.id === selectedTaskId)?.title) : '-- Personalizado --'}</span>
-                                <i className="fas fa-chevron-down text-slate-400"></i>
+                                <span className="truncate pr-2 flex items-center gap-1.5">
+                                    {selectedTaskId
+                                        ? (isGivingBadge
+                                            ? data.badgesCatalog.find(b => b.id === selectedTaskId)?.name
+                                            : (() => {
+                                                const t = data.taskCatalog.find(t => t.id === selectedTaskId);
+                                                const cc = CATEGORY_CONFIG[t?.category || 'Custom'] || CATEGORY_CONFIG['Custom'];
+                                                return <><i className={`fas ${cc.icon} ${cc.color}`}></i> {cc.label}</>;
+                                            })())
+                                        : <span className="text-slate-400">— Tarefa Rápida —</span>
+                                    }
+                                </span>
+                                <i className="fas fa-chevron-down text-slate-400 text-[10px]"></i>
                             </button>
                         </div>
 
                         {!isGivingBadge && (
-                            <div className="animate-fade-in space-y-4">
+                            <div className="animate-fade-in space-y-3">
                                 <div>
-                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Título / Motivo</label>
-                                    <Input
-                                        placeholder="Ex: Participação em Aula"
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block tracking-wide">Nome da missão</label>
+                                    <input
+                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs outline-none focus:border-indigo-500 transition-colors"
+                                        placeholder="Ex: Participação"
                                         value={manualDesc}
                                         onFocus={(e: any) => {
                                             if (!manualDesc && !selectedTaskId) {
-                                                setManualDesc(`Atividade de ${profile?.subject || 'Linguagens'}`);
+                                                setManualDesc(`Atividade de ${profile?.subject || 'Linguagem'}`);
                                             }
                                             setTimeout(() => e.target.select(), 10);
                                         }}
@@ -285,42 +324,45 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                     />
                                 </div>
                                 <div>
-                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Descrição da Missão</label>
-                                    <Input
-                                        placeholder="Válido apenas para este lançamento..."
+                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block tracking-wide">Descrição (opcional)</label>
+                                    <input
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs outline-none focus:border-indigo-400 transition-colors text-slate-600"
+                                        placeholder="Detalhes da missão..."
                                         value={customMissionDesc}
                                         onChange={(e: any) => setCustomMissionDesc(e.target.value)}
                                     />
                                 </div>
-                                <div className="flex items-center gap-2 justify-center mt-2 bg-slate-50 p-2 rounded-xl border border-slate-100">
+                                <div className="flex items-center gap-1 justify-center mt-1 bg-slate-50 p-2 rounded-2xl border border-slate-100 shadow-inner">
                                     <button onClick={() => {
-                                        const minL = selectedTaskId ? (isGivingBadge ? 0 : -10) : -5;
-                                        setManualPoints(p => Math.max(minL, p - 5));
-                                    }} className="w-8 h-8 md:w-10 md:h-10 bg-white shadow-sm border border-slate-200 rounded-lg font-bold hover:bg-slate-50 touch-manipulation text-slate-600">-</button>
-                                    <div className="flex flex-col items-center px-4">
-                                        <label className="text-[9px] font-bold text-slate-400 uppercase">LXC</label>
-                                        <input type="number" className="w-16 md:w-20 text-center font-bold text-lg md:text-xl outline-none bg-transparent text-indigo-600" value={manualPoints} onChange={e => {
-                                            let val = parseInt(e.target.value) || 0;
-                                            const minL = selectedTaskId ? (isGivingBadge ? 0 : -10) : -5;
-                                            const maxL = selectedTaskId ? (isGivingBadge ? 50 : 250) : 100;
-                                            setManualPoints(Math.min(maxL, Math.max(minL, val)));
-                                        }} />
+                                        setManualPoints(p => Math.max(pointMin, p - 5));
+                                    }} className="w-10 h-10 bg-white shadow-sm border border-slate-200 rounded-xl font-bold hover:bg-slate-50 hover:border-indigo-300 touch-manipulation text-slate-600 transition-all active:scale-95">-</button>
+                                    <div className="flex items-center justify-center flex-1 gap-2">
+                                        <div className="flex flex-col items-center">
+                                            <label className="text-[9px] font-bold text-slate-400 uppercase">LXC</label>
+                                            <input
+                                                type="number"
+                                                className="w-16 text-center font-black text-xl outline-none bg-transparent text-indigo-600 hide-number-arrows"
+                                                value={manualPoints}
+                                                min={pointMin}
+                                                max={pointMax}
+                                                onChange={e => {
+                                                    let val = parseInt(e.target.value) || 0;
+                                                    setManualPoints(Math.min(pointMax, Math.max(pointMin, val)));
+                                                }}
+                                            />
+                                        </div>
+                                        <span className="text-[9px] text-slate-300 font-mono leading-tight">{pointMin}<br />–{pointMax}</span>
                                     </div>
                                     <button onClick={() => {
-                                        const maxL = selectedTaskId ? (isGivingBadge ? 50 : 250) : 100;
-                                        setManualPoints(p => Math.min(maxL, p + 5));
-                                    }} className="w-8 h-8 md:w-10 md:h-10 bg-white shadow-sm border border-slate-200 rounded-lg font-bold hover:bg-slate-50 touch-manipulation text-slate-600">+</button>
+                                        setManualPoints(p => Math.min(pointMax, p + 5));
+                                    }} className="w-10 h-10 bg-white shadow-sm border border-slate-200 rounded-xl font-bold hover:bg-slate-50 hover:border-indigo-300 touch-manipulation text-slate-600 transition-all active:scale-95">+</button>
                                 </div>
                             </div>
                         )}
 
                         <div className="mt-auto pt-4 md:pt-0">
-                            <div className="bg-indigo-50 p-3 rounded-xl mb-4 flex justify-between items-center">
-                                <span className="text-xs font-bold text-indigo-800">Alunos Selecionados:</span>
-                                <span className="bg-white text-indigo-600 px-2 py-1 rounded text-xs font-bold shadow-sm">{selectedStudentsForTask.length}</span>
-                            </div>
-                            <Button onClick={giveRewards} className="w-full py-4 text-lg" variant={isGivingBadge ? 'warning' : 'primary'} disabled={selectedStudentsForTask.length === 0}>
-                                {isGivingBadge ? 'Condecorar' : 'Confirmar'}
+                            <Button onClick={giveRewards} className="w-full py-3.5 text-sm uppercase tracking-wider" variant={isGivingBadge ? 'warning' : 'primary'} disabled={selectedStudentsForTask.length === 0}>
+                                {isGivingBadge ? 'Condecorar Alunos' : 'Enviar LXC'}
                             </Button>
                         </div>
                     </div>
