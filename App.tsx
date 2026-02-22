@@ -1770,6 +1770,40 @@ export default function App() {
         );
     }
 
+    const renderCloudSyncButton = () => (
+        <div className="flex items-center gap-2 ml-auto shrink-0">
+            {syncMessage && <span className="hidden sm:inline-block text-xs font-bold text-indigo-500 bg-indigo-50 px-2 py-1 rounded shadow-sm animate-fade-in">{syncMessage}</span>}
+            <button
+                onClick={async () => {
+                    const uid = auth.currentUser?.uid;
+                    if (!uid) {
+                        showToast("Você precisa estar logado para salvar na nuvem.", "error");
+                        return;
+                    }
+                    setIsSyncing(true);
+                    setSyncMessage('Salvando na nuvem...');
+                    try {
+                        await firestoreSyncAll(uid, data, profile);
+                        setSyncMessage('Salvo com sucesso!');
+                    } catch (err: any) {
+                        console.error(err);
+                        setSyncMessage('Erro ao salvar.');
+                        showToast("Erro ao salvar: " + err.message, "error");
+                    } finally {
+                        setTimeout(() => {
+                            setIsSyncing(false);
+                            setSyncMessage('');
+                        }, 3000);
+                    }
+                }}
+                className="w-10 h-10 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 hover:border-indigo-400 text-indigo-600 rounded-xl flex items-center justify-center transition-all shadow-sm cursor-pointer"
+                title="Salvar na Nuvem (Sync)"
+            >
+                {isSyncing ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-cloud-upload-alt"></i>}
+            </button>
+        </div>
+    );
+
     return (
         <div className="min-h-screen flex bg-slate-50 overflow-hidden font-sans text-slate-800 flex-col md:flex-row">
             <div className="md:hidden h-16 bg-slate-900 flex items-center justify-between px-6 z-30 shadow-md flex-shrink-0">
@@ -1843,41 +1877,12 @@ export default function App() {
 
             <main className="flex-1 h-[calc(100vh-64px)] md:h-screen overflow-y-auto p-4 md:p-8 relative bg-slate-50">
 
-                <div className="absolute top-4 right-4 md:top-8 md:right-8 z-20 flex items-center gap-2">
-                    {syncMessage && <span className="text-xs font-bold text-indigo-500 bg-indigo-50 px-2 py-1 rounded shadow-sm animate-fade-in">{syncMessage}</span>}
-                    <button
-                        onClick={async () => {
-                            const uid = auth.currentUser?.uid;
-                            if (!uid) {
-                                showToast("Você precisa estar logado para salvar na nuvem.", "error");
-                                return;
-                            }
-                            setIsSyncing(true);
-                            setSyncMessage('Salvando na nuvem...');
-                            try {
-                                await firestoreSyncAll(uid, data, profile);
-                                setSyncMessage('Salvo com sucesso!');
-                            } catch (err: any) {
-                                console.error(err);
-                                setSyncMessage('Erro ao salvar.');
-                                showToast("Erro ao salvar: " + err.message, "error");
-                            } finally {
-                                setTimeout(() => {
-                                    setIsSyncing(false);
-                                    setSyncMessage('');
-                                }, 3000);
-                            }
-                        }}
-                        className="w-10 h-10 md:w-12 md:h-12 bg-white hover:bg-indigo-50 border-2 border-indigo-200 hover:border-indigo-400 text-indigo-600 rounded-xl flex items-center justify-center transition-all shadow-lg hover:shadow-xl cursor-pointer"
-                        title="Salvar na Nuvem (Sync)"
-                    >
-                        {isSyncing ? <i className="fas fa-spinner fa-spin text-lg md:text-xl"></i> : <i className="fas fa-cloud-upload-alt text-lg md:text-xl"></i>}
-                    </button>
-                </div>
-
                 {view === 'profile' && (
                     <div className="max-w-2xl mx-auto animate-fade-in">
-                        <h2 className="text-lg md:text-xl font-bold text-slate-800 mb-6">Perfil do Professor</h2>
+                        <div className="flex justify-between items-center mb-6 gap-4">
+                            <h2 className="text-lg md:text-xl font-bold text-slate-800">Perfil do Professor</h2>
+                            {renderCloudSyncButton()}
+                        </div>
                         <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-slate-200">
                             <form onSubmit={handleProfileUpdate} className="space-y-6">
                                 <div className="flex items-center gap-6 mb-6">
@@ -2202,8 +2207,11 @@ export default function App() {
                     view === 'schools' && (
                         <div className="max-w-4xl mx-auto animate-fade-in">
                             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 md:mb-8 gap-4">
-                                <h2 className="text-lg md:text-xl font-bold text-slate-800">Estrutura Escolar</h2>
-                                <Button onClick={() => openModal('school', 'create')} className="w-full sm:w-auto">+ Nova Escola</Button>
+                                <h2 className="text-lg md:text-xl font-bold text-slate-800 flex-1">Estrutura Escolar</h2>
+                                <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                                    {renderCloudSyncButton()}
+                                    <Button onClick={() => openModal('school', 'create')} className="flex-1 sm:flex-none py-2 px-4 whitespace-nowrap">+ Nova Escola</Button>
+                                </div>
                             </div>
 
                             <div className="space-y-6">
@@ -2318,6 +2326,7 @@ export default function App() {
                                         <button key={b} onClick={() => setCurrentBimester(b as Bimester)} className={`flex-1 md:flex-none px-3 py-1 rounded-md text-xs font-bold transition-all whitespace-nowrap ${currentBimester === b ? 'bg-white shadow text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}>{b}º Bim</button>
                                     ))}
                                 </div>
+                                {renderCloudSyncButton()}
                             </div>
 
                             {!selectedClassId ? (
@@ -2438,7 +2447,7 @@ export default function App() {
                                                                         value={individualScores[student.id] ?? manualPoints}
                                                                         onChange={(e) => {
                                                                             let val = parseInt(e.target.value) || 0;
-                                                                            setIndividualScores(prev => ({ ...prev, [student.id]: val }));
+                                                                            setIndividualScores(prev => ({ ...prev, [student.id]: Math.min(250, Math.max(-10, val)) }));
                                                                         }}
                                                                     />
                                                                 </div>
@@ -2521,15 +2530,23 @@ export default function App() {
                                                     />
                                                 </div>
                                                 <div className="flex items-center gap-2 justify-center mt-2 bg-slate-50 p-2 rounded-xl border border-slate-100">
-                                                    <button onClick={() => setManualPoints(p => Math.max(-20, p - 5))} className="w-8 h-8 md:w-10 md:h-10 bg-white shadow-sm border border-slate-200 rounded-lg font-bold hover:bg-slate-50 touch-manipulation text-slate-600">-</button>
+                                                    <button onClick={() => {
+                                                        const minL = selectedTaskId ? (isGivingBadge ? 0 : -10) : -5;
+                                                        setManualPoints(p => Math.max(minL, p - 5));
+                                                    }} className="w-8 h-8 md:w-10 md:h-10 bg-white shadow-sm border border-slate-200 rounded-lg font-bold hover:bg-slate-50 touch-manipulation text-slate-600">-</button>
                                                     <div className="flex flex-col items-center px-4">
                                                         <label className="text-[9px] font-bold text-slate-400 uppercase">LXC</label>
                                                         <input type="number" className="w-16 md:w-20 text-center font-bold text-lg md:text-xl outline-none bg-transparent text-indigo-600" value={manualPoints} onChange={e => {
                                                             let val = parseInt(e.target.value) || 0;
-                                                            setManualPoints(val);
+                                                            const minL = selectedTaskId ? (isGivingBadge ? 0 : -10) : -5;
+                                                            const maxL = selectedTaskId ? (isGivingBadge ? 50 : 250) : 100;
+                                                            setManualPoints(Math.min(maxL, Math.max(minL, val)));
                                                         }} />
                                                     </div>
-                                                    <button onClick={() => setManualPoints(p => Math.min(500, p + 5))} className="w-8 h-8 md:w-10 md:h-10 bg-white shadow-sm border border-slate-200 rounded-lg font-bold hover:bg-slate-50 touch-manipulation text-slate-600">+</button>
+                                                    <button onClick={() => {
+                                                        const maxL = selectedTaskId ? (isGivingBadge ? 50 : 250) : 100;
+                                                        setManualPoints(p => Math.min(maxL, p + 5));
+                                                    }} className="w-8 h-8 md:w-10 md:h-10 bg-white shadow-sm border border-slate-200 rounded-lg font-bold hover:bg-slate-50 touch-manipulation text-slate-600">+</button>
                                                 </div>
                                             </div>
                                         )}
@@ -2792,13 +2809,16 @@ export default function App() {
 
                         {modalConfig.type === 'task' && (
                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Pontos (LXC) [5 a 250]</label>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Pontos (LXC) [-10 a 250]</label>
                                 <input
                                     type="number"
-                                    min="5"
+                                    min="-10"
                                     max="250"
                                     value={formData.points}
-                                    onChange={(e: any) => setFormData({ ...formData, points: e.target.value })}
+                                    onChange={(e: any) => {
+                                        let val = parseInt(e.target.value) || 0;
+                                        setFormData({ ...formData, points: Math.min(250, Math.max(-10, val)) });
+                                    }}
                                     className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
                                 />
                             </div>
@@ -2812,7 +2832,10 @@ export default function App() {
                                     min="-30"
                                     max="-1"
                                     value={formData.points}
-                                    onChange={(e: any) => setFormData({ ...formData, points: e.target.value })}
+                                    onChange={(e: any) => {
+                                        let val = parseInt(e.target.value) || 0;
+                                        setFormData({ ...formData, points: Math.min(-1, Math.max(-30, val)) });
+                                    }}
                                     className="w-full bg-red-50 border border-red-300 rounded-xl p-3 outline-none focus:border-red-500 text-red-700 font-bold"
                                 />
                                 <p className="text-[10px] text-slate-400 mt-1">Insira o valor negativo. Ex: -10</p>
@@ -2826,9 +2849,12 @@ export default function App() {
                                     <input
                                         type="number"
                                         min="0"
-                                        max="100"
+                                        max="50"
                                         value={formData.rewardValue}
-                                        onChange={(e: any) => setFormData({ ...formData, rewardValue: e.target.value })}
+                                        onChange={(e: any) => {
+                                            let val = parseInt(e.target.value) || 0;
+                                            setFormData({ ...formData, rewardValue: Math.min(50, Math.max(0, val)) });
+                                        }}
                                         className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
                                         placeholder="0"
                                     />
