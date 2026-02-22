@@ -44,6 +44,12 @@ import {
 import { auth } from './services/firebase';
 
 
+import { ProfileView } from './components/views/ProfileView';
+import { SettingsView } from './components/views/SettingsView';
+import { CatalogView } from './components/views/CatalogView';
+import { SchoolManagementView } from './components/views/SchoolManagementView';
+import { DashboardView } from './components/views/DashboardView';
+import { StudentTimelineView } from './components/views/StudentTimelineView';
 // --- CONSTANTES VISUAIS ---
 
 const ICON_LIBRARY = [
@@ -1493,280 +1499,29 @@ export default function App() {
     if (view === 'student-view') {
         const student = getAllStudents(data.schools).find(s => s.id === viewingStudentId);
         if (!student) return <div className="p-8 text-center text-red-500">Erro: Aluno não encontrado. Volte ao painel.</div>;
-        const total = student.lxcTotal[currentBimester] || 0;
-        const level = getLevel(total, currentBimester);
-        const myBadges = data.badgesCatalog.filter(b => student.badges?.includes(b.id));
-
-        const studentTransactions = data.transactions
-            .filter(t => t.studentId === student.id && t.bimester === currentBimester)
-            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-        let runningBalance = 0;
-        let currentLevelTitle = getLevel(0, currentBimester).title;
-
-        const timelineEvents = studentTransactions.map(tx => {
-            runningBalance += tx.amount;
-            const newLevel = getLevel(runningBalance, currentBimester);
-            let levelUpData = null;
-
-            if (newLevel.title !== currentLevelTitle) {
-                levelUpData = { prev: currentLevelTitle, next: newLevel.title, level: newLevel };
-                currentLevelTitle = newLevel.title;
-            }
-            return { ...tx, levelUpData, runningBalance };
-        }).reverse();
-
         return (
-            <div className="min-h-screen bg-slate-100 font-sans pb-10">
-                <div className={`${level.color} text-white p-8 rounded-b-[3rem] shadow-xl relative`}>
-                    <button onClick={() => setView('dashboard')} className="absolute top-4 left-4 bg-white/20 px-3 py-1 rounded-full text-xs font-bold hover:bg-white/30 transition-all z-10"><i className="fas fa-arrow-left"></i> Voltar</button>
-                    {student.registrationId && (
-                        <div className="absolute top-4 right-4 bg-white/20 px-3 py-1 rounded-full text-xs font-bold z-10" title="Matrícula">
-                            <i className="fas fa-id-card mr-1"></i> {student.registrationId}
-                        </div>
-                    )}
-                    <div className="flex flex-col items-center mt-4">
-                        <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center text-5xl text-slate-700 font-bold mb-4 shadow-lg border-4 border-white/30 relative">
-                            {student.name.charAt(0)}
-                            <button
-                                onClick={() => {
-                                    const newNick = prompt("Escolha seu Nickname:", student.nickname || "");
-                                    if (newNick !== null) updateStudentNickname(student.id, newNick);
-                                }}
-                                className="absolute bottom-0 right-0 w-8 h-8 bg-indigo-500 hover:bg-indigo-600 rounded-full flex items-center justify-center text-white text-xs shadow-md border-2 border-white"
-                                title="Editar Nickname"
-                            >
-                                <i className="fas fa-pen"></i>
-                            </button>
-                        </div>
-
-                        {student.nickname && (
-                            <h1 className="text-xl font-black gamified-font mb-1 tracking-wide">{student.nickname}</h1>
-                        )}
-                        <h2 className={`${student.nickname ? 'text-sm opacity-80 font-medium' : 'text-xl font-bold'}`}>{student.name}</h2>
-
-                        <div className="mt-4 flex items-center gap-2">
-                            <span className="bg-white/20 px-4 py-1.5 rounded-full text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-                                <i className="fas fa-crown"></i> {level.title}
-                            </span>
-                        </div>
-
-                        <div className="mt-6 text-6xl font-black gamified-font drop-shadow-md">{total} <span className="text-lg opacity-70 font-bold">LXC</span></div>
-                    </div>
-                </div>
-
-                <div className="max-w-2xl mx-auto px-6 -mt-8 relative z-10 space-y-6">
-                    <div className="bg-white p-6 rounded-3xl shadow-lg border-2 border-amber-100">
-                        <div className="flex justify-between items-center mb-4">
-                            <h3 className="text-slate-700 font-bold text-sm uppercase flex items-center gap-2"><i className="fas fa-medal text-amber-500 text-lg"></i> Hall de Medalhas</h3>
-                            <span className="bg-amber-100 text-amber-700 text-xs font-bold px-2 py-1 rounded-full">{myBadges.length}</span>
-                        </div>
-
-                        {myBadges.length === 0 ? <p className="text-slate-400 text-sm italic text-center py-4">Sua coleção de medalhas está vazia. Continue se esforçando!</p> : (
-                            <div className="flex flex-wrap gap-4 justify-center">
-                                {myBadges.map(b => (
-                                    <div key={b.id} className="flex flex-col items-center group relative cursor-pointer">
-                                        {b.imageUrl ? (
-                                            <img src={b.imageUrl} alt={b.name} className="w-16 h-16 rounded-full object-cover border-4 border-amber-200 shadow-md mb-2 bg-white transition-transform group-hover:scale-110" />
-                                        ) : (
-                                            <div className="w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center text-amber-500 text-3xl mb-2 border-4 border-amber-200 shadow-md transition-transform group-hover:scale-110">
-                                                <i className={`fas ${b.icon}`}></i>
-                                            </div>
-                                        )}
-                                        <span className="text-[10px] font-bold text-slate-600 max-w-[80px] text-center leading-tight bg-slate-100 px-2 py-1 rounded-full">{b.name}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="space-y-4">
-                        <h3 className="text-slate-500 font-bold text-xs uppercase ml-4 tracking-widest">Linha do Tempo</h3>
-                        {timelineEvents.length === 0 && <div className="text-center text-slate-400 italic">Nenhuma atividade registrada neste bimestre.</div>}
-                        {timelineEvents.map((tx: any) => (
-                            <div key={tx.id}>
-                                {tx.levelUpData && (
-                                    <div className="my-6 text-center animate-fade-in">
-                                        <div className="inline-block bg-gradient-to-r from-indigo-500 to-purple-600 text-white px-6 py-2 rounded-full shadow-lg shadow-indigo-500/30 transform hover:scale-105 transition-transform">
-                                            <p className="text-xs font-bold uppercase opacity-80 mb-1">Promoção Conquistada!</p>
-                                            <div className="flex items-center gap-2 text-sm font-black">
-                                                <span>{tx.levelUpData.prev}</span>
-                                                <i className="fas fa-arrow-right"></i>
-                                                <span className="text-lg text-yellow-300"><i className="fas fa-crown mr-1"></i> {tx.levelUpData.next}</span>
-                                            </div>
-                                        </div>
-                                        <div className="h-4 w-0.5 bg-slate-300 mx-auto mt-2"></div>
-                                    </div>
-                                )}
-
-                                <div
-                                    className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex justify-between items-center relative overflow-hidden group hover:border-indigo-400 cursor-pointer transition-colors"
-                                    onClick={() => setViewingTransactionId(tx.id)}
-                                >
-                                    <div className={`absolute left-0 top-0 bottom-0 w-1 ${tx.amount > 0 ? 'bg-emerald-400' : 'bg-red-400'}`}></div>
-                                    <div className="pl-3 flex-1 min-w-0">
-                                        <div className="flex items-center justify-between">
-                                            <p className="font-bold text-slate-700 text-sm truncate relative group/title">
-                                                {tx.teacherName && (
-                                                    <span className="absolute left-[-10px] top-1/2 -translate-y-1/2 -translate-x-full opacity-0 group-hover/title:opacity-100 transition-opacity bg-slate-800 text-white text-[10px] py-1 px-2 rounded whitespace-nowrap z-10 pointer-events-none">
-                                                        Lançado por: {tx.teacherName}
-                                                        <span className="absolute top-1/2 -right-1 -translate-y-1/2 border-4 border-transparent border-l-slate-800"></span>
-                                                    </span>
-                                                )}
-                                                {tx.type === 'BADGE' ? (
-                                                    <span className="flex items-center gap-2 text-amber-600">
-                                                        <i className="fas fa-medal"></i>
-                                                        {data.badgesCatalog.find(b => b.id === tx.description)?.name || 'Nova Medalha'}
-                                                    </span>
-                                                ) : tx.description}
-                                            </p>
-                                        </div>
-                                        {/* NOVO: Exibir e editar customDescription */}
-                                        {editingTxDescId === tx.id ? (
-                                            <input
-                                                autoFocus
-                                                type="text"
-                                                className="w-full text-xs p-1 border rounded mt-1 outline-none focus:border-indigo-400 font-medium text-slate-600 bg-slate-50"
-                                                value={editingTxDescValue}
-                                                onChange={e => setEditingTxDescValue(e.target.value)}
-                                                onBlur={() => saveTxDescEdit(tx.id)}
-                                                onKeyDown={e => { if (e.key === 'Enter') saveTxDescEdit(tx.id); if (e.key === 'Escape') setEditingTxDescId(null); }}
-                                                placeholder="Adicione uma descrição..."
-                                            />
-                                        ) : (
-                                            <p
-                                                className="text-xs mt-1 cursor-pointer transition-colors group/desc"
-                                                onClick={(e) => { e.stopPropagation(); setEditingTxDescId(tx.id); setEditingTxDescValue(tx.customDescription || ''); }}
-                                                title="Clique para editar a descrição"
-                                            >
-                                                {tx.customDescription ? (
-                                                    <span className="text-slate-500 font-medium group-hover/desc:text-indigo-600">{tx.customDescription}</span>
-                                                ) : (
-                                                    <span className="text-[10px] italic text-slate-300 font-normal group-hover/desc:text-indigo-400">+ Adicionar Descrição</span>
-                                                )}
-                                            </p>
-                                        )}
-                                        <p className="text-[10px] text-slate-400 mt-1 flex items-center gap-2">
-                                            <i className="far fa-clock"></i> {new Date(tx.date).toLocaleDateString()}
-                                        </p>
-                                    </div>
-                                    <div className="flex items-center gap-4 pl-2">
-                                        <div className="text-right">
-                                            {editingTransactionId === tx.id ? (
-                                                <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
-                                                    <button
-                                                        className="w-6 h-6 bg-slate-100 rounded text-slate-500 hover:text-indigo-600 font-bold flex items-center justify-center text-xs"
-                                                        onClick={() => setEditingTransactionValue(prev => (Number(prev) - 1).toString())}
-                                                    >-</button>
-                                                    <input
-                                                        type="number"
-                                                        className="w-12 text-center font-black text-lg text-indigo-600 bg-transparent outline-none border-b border-indigo-300"
-                                                        value={editingTransactionValue}
-                                                        onChange={(e) => setEditingTransactionValue(e.target.value)}
-                                                        onBlur={() => saveTransactionEdit(tx.id)}
-                                                        onKeyDown={(e) => {
-                                                            if (e.key === 'Enter') saveTransactionEdit(tx.id);
-                                                            if (e.key === 'Escape') setEditingTransactionId(null);
-                                                        }}
-                                                        autoFocus
-                                                    />
-                                                    <button
-                                                        className="w-6 h-6 bg-slate-100 rounded text-slate-500 hover:text-indigo-600 font-bold flex items-center justify-center text-xs"
-                                                        onClick={() => setEditingTransactionValue(prev => (Number(prev) + 1).toString())}
-                                                    >+</button>
-                                                </div>
-                                            ) : (
-                                                <div
-                                                    className={`font-black text-lg cursor-pointer hover:scale-110 transition-transform ${tx.amount > 0 ? 'text-emerald-500' : 'text-slate-400'}`}
-                                                    onClick={(e) => { e.stopPropagation(); handleEditTransactionAmount(tx.id, tx.amount); }}
-                                                    title="Clique para editar"
-                                                >
-                                                    {tx.amount > 0 ? '+' : ''}{tx.amount}
-                                                </div>
-                                            )}
-                                            <div className="text-[9px] font-bold text-slate-300 uppercase">LXC</div>
-                                        </div>
-                                        <div className="flex gap-1">
-                                            {editingTransactionId !== tx.id && (
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); handleEditTransactionAmount(tx.id, tx.amount); }}
-                                                    className="w-8 h-8 rounded-lg bg-amber-50 text-amber-500 hover:bg-amber-100 flex items-center justify-center transition-colors"
-                                                    title="Editar Valor"
-                                                >
-                                                    <i className="fas fa-pen text-xs"></i>
-                                                </button>
-                                            )}
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); handleDeleteTransaction(tx.id); }}
-                                                className="w-8 h-8 rounded-lg bg-red-50 text-red-400 hover:bg-red-100 flex items-center justify-center transition-colors"
-                                                title="Excluir Item"
-                                            >
-                                                <i className="fas fa-trash text-xs"></i>
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="h-4 w-0.5 bg-slate-200 mx-auto -mb-2 last:hidden"></div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-
-                {viewingTransactionId && (
-                    <GenericModal
-                        title="Detalhes da Transação"
-                        onClose={() => setViewingTransactionId(null)}
-                        onSave={() => setViewingTransactionId(null)}
-                        saveLabel="Fechar"
-                        saveVariant="secondary"
-                    >
-                        {(() => {
-                            const tx = studentTransactions.find(t => t.id === viewingTransactionId);
-                            if (!tx) return <p>Transação não encontrada.</p>;
-                            return (
-                                <div className="space-y-4">
-                                    <div className="flex justify-between items-center border-b border-slate-100 pb-4">
-                                        <span className="text-xs font-bold text-slate-500 uppercase">Data do Registro</span>
-                                        <span className="text-slate-700 font-medium">{new Date(tx.date).toLocaleString()}</span>
-                                    </div>
-                                    <div className="flex justify-between items-center border-b border-slate-100 pb-4">
-                                        <span className="text-xs font-bold text-slate-500 uppercase">Tipo</span>
-                                        <span className="text-slate-700 font-medium">{tx.type === 'BADGE' ? 'Medalha' : tx.type === 'TASK' ? 'Tarefa' : 'Penalidade'}</span>
-                                    </div>
-                                    <div className="flex justify-between items-center border-b border-slate-100 pb-4">
-                                        <span className="text-xs font-bold text-slate-500 uppercase">Valor na Carteira</span>
-                                        <span className={`font-black text-lg ${tx.amount > 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                                            {tx.amount > 0 ? '+' : ''}{tx.amount} LXC
-                                        </span>
-                                    </div>
-                                    {tx.teacherName && (
-                                        <div className="flex justify-between items-center border-b border-slate-100 pb-4">
-                                            <span className="text-xs font-bold text-slate-500 uppercase">Assinatura / Autor</span>
-                                            <span className="text-indigo-600 font-bold bg-indigo-50 px-3 py-1 rounded-full text-xs">
-                                                <i className="fas fa-tag mr-1"></i> {tx.teacherName}
-                                            </span>
-                                        </div>
-                                    )}
-                                    <div className="space-y-2 border-b border-slate-100 pb-4">
-                                        <span className="text-xs font-bold text-slate-500 uppercase">Motivo Principal</span>
-                                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-slate-700 font-medium">
-                                            {tx.description}
-                                        </div>
-                                    </div>
-                                    {tx.customDescription && (
-                                        <div className="space-y-2">
-                                            <span className="text-xs font-bold text-slate-500 uppercase">Anotações do Professor</span>
-                                            <div className="bg-amber-50 p-4 rounded-xl border border-amber-200 text-amber-800 text-sm italic">
-                                                "{tx.customDescription}"
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        })()}
-                    </GenericModal>
-                )}
-            </div>
+            <StudentTimelineView
+                student={student}
+                data={data}
+                currentBimester={currentBimester}
+                getLevel={getLevel}
+                setView={setView}
+                updateStudentNickname={updateStudentNickname}
+                viewingTransactionId={viewingTransactionId}
+                setViewingTransactionId={setViewingTransactionId}
+                editingTxDescId={editingTxDescId}
+                setEditingTxDescId={setEditingTxDescId}
+                editingTxDescValue={editingTxDescValue}
+                setEditingTxDescValue={setEditingTxDescValue}
+                saveTxDescEdit={saveTxDescEdit}
+                editingTransactionId={editingTransactionId}
+                setEditingTransactionId={setEditingTransactionId}
+                editingTransactionValue={editingTransactionValue}
+                setEditingTransactionValue={setEditingTransactionValue}
+                saveTransactionEdit={saveTransactionEdit}
+                handleEditTransactionAmount={handleEditTransactionAmount}
+                handleDeleteTransaction={handleDeleteTransaction}
+            />
         );
     }
 
@@ -1878,692 +1633,91 @@ export default function App() {
             <main className="flex-1 h-[calc(100vh-64px)] md:h-screen overflow-y-auto p-4 md:p-8 relative bg-slate-50">
 
                 {view === 'profile' && (
-                    <div className="max-w-2xl mx-auto animate-fade-in">
-                        <div className="flex justify-between items-center mb-6 gap-4">
-                            <h2 className="text-lg md:text-xl font-bold text-slate-800">Perfil do Professor</h2>
-                            {renderCloudSyncButton()}
-                        </div>
-                        <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-slate-200">
-                            <form onSubmit={handleProfileUpdate} className="space-y-6">
-                                <div className="flex items-center gap-6 mb-6">
-                                    <div className="w-20 h-20 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 text-4xl shadow-inner">
-                                        <i className="fas fa-user-tie"></i>
-                                    </div>
-                                    <div>
-                                        <h3 className="text-xl font-bold text-slate-800">{profile.name}</h3>
-                                        <p className="text-slate-500 text-sm">{profile.subject}</p>
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nome Completo</label>
-                                    <input
-                                        name="name"
-                                        defaultValue={profile.name}
-                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
-                                        required
-                                    />
-                                </div>
-
-                                <div>
-                                    <div className="flex items-center gap-2 mb-1">
-                                        <label className="block text-xs font-bold text-slate-500 uppercase">Nome de Exibição / Sigla</label>
-                                        <div className="group relative inline-block text-slate-400 cursor-help">
-                                            <i className="fas fa-info-circle"></i>
-                                            <div className="absolute hidden group-hover:block bottom-full mb-2 left-1/2 -translate-x-1/2 w-48 bg-slate-800 text-white text-[10px] p-2 rounded z-20 shadow-lg text-center normal-case tracking-normal">
-                                                Abreviação (ex "Prof. Rafael") que assinará a distribuição de tarefas na linha do tempo dos alunos.
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <input
-                                        name="displayName"
-                                        maxLength={20}
-                                        defaultValue={profile.displayName || ''}
-                                        placeholder="Ex: Prof. Rafael"
-                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
-                                    />
-                                </div>
-
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Disciplina / Matéria</label>
-                                    <input
-                                        name="subject"
-                                        defaultValue={profile.subject}
-                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
-                                        required
-                                    />
-                                </div>
-
-                                <div>
-                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Bio / Comentário (Visível para alunos)</label>
-                                    <textarea
-                                        name="bio"
-                                        defaultValue={profile.bio}
-                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 h-24"
-                                    />
-                                </div>
-
-                                <div className="pt-6 border-t border-slate-100">
-                                    <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><i className="fas fa-lock text-amber-500"></i> Segurança</h4>
-
-                                    {auth.currentUser?.providerData.some(p => p.providerId === 'google.com') ? (
-                                        <div className="bg-amber-50 p-4 rounded-xl border border-amber-100 flex items-start gap-3">
-                                            <i className="fab fa-google text-amber-500 mt-1"></i>
-                                            <div>
-                                                <h5 className="font-bold text-amber-800 text-sm">Conta Google Vinculada</h5>
-                                                <p className="text-xs text-amber-700 mt-1">Sua conta utiliza o login seguro do Google. A alteração de senha deve ser feita diretamente na sua conta Google.</p>
-                                            </div>
-                                        </div>
-                                    ) : (
-                                        <div className="space-y-4">
-                                            <div>
-                                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Senha Atual *</label>
-                                                <input
-                                                    type="password"
-                                                    name="currentPass"
-                                                    className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
-                                                    placeholder="Digite a senha atual..."
-                                                />
-                                            </div>
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                <div>
-                                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nova Senha</label>
-                                                    <input
-                                                        type="password"
-                                                        name="newPass"
-                                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
-                                                        placeholder="Nova senha..."
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Confirmar Nova Senha</label>
-                                                    <input
-                                                        type="password"
-                                                        name="confirmPass"
-                                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
-                                                        placeholder="Repita a senha..."
-                                                    />
-                                                </div>
-                                            </div>
-                                            <p className="text-[10px] text-slate-400 mt-2">
-                                                Atenção: Deixe em branco caso não queira alterar a senha.
-                                            </p>
-                                        </div>
-                                    )}
-                                </div>
-
-                                <div className="pt-6 border-t border-slate-100">
-                                    <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><i className="fas fa-key text-amber-500"></i> Proteção por PIN</h4>
-                                    <p className="text-sm text-slate-500 mb-4">O PIN é utilizado para bloquear configurações sensíveis nas Turmas e Escolas.</p>
-                                    <div className="space-y-4">
-                                        <div>
-                                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">PIN Atual *</label>
-                                            <input
-                                                type="password"
-                                                name="currentPin"
-                                                maxLength={4}
-                                                className="w-[120px] text-center tracking-widest font-bold bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
-                                                placeholder="0000"
-                                            />
-                                            <p className="text-[10px] text-slate-400 mt-1 italic">
-                                                O PIN provisório padrão é "0000".
-                                            </p>
-                                        </div>
-                                        <div className="flex gap-4">
-                                            <div>
-                                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Novo PIN</label>
-                                                <input
-                                                    type="password"
-                                                    name="newPin"
-                                                    maxLength={4}
-                                                    className="w-[120px] text-center tracking-widest font-bold bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
-                                                    placeholder="••••"
-                                                />
-                                            </div>
-                                            <div>
-                                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Confirmar PIN</label>
-                                                <input
-                                                    type="password"
-                                                    name="confirmPin"
-                                                    maxLength={4}
-                                                    className="w-[120px] text-center tracking-widest font-bold bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
-                                                    placeholder="••••"
-                                                />
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="flex justify-end pt-4">
-                                    <Button className="w-full md:w-auto px-8">Salvar Alterações</Button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
+                    <ProfileView
+                        profile={profile}
+                        handleProfileUpdate={handleProfileUpdate}
+                        auth={auth}
+                        renderCloudSyncButton={renderCloudSyncButton}
+                    />
                 )}
 
                 {view === 'settings' && (
-                    <div className="max-w-2xl mx-auto animate-fade-in">
-                        <h2 className="text-lg md:text-xl font-bold text-slate-800 mb-6">Segurança dos Dados</h2>
-                        <div className="bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-slate-200 text-center space-y-6">
-                            <div className="w-16 h-16 md:w-20 md:h-20 bg-indigo-50 rounded-full flex items-center justify-center mx-auto text-indigo-600 text-3xl mb-4">
-                                <i className="fas fa-database"></i>
-                            </div>
-                            <div>
-                                <h3 className="text-xl font-bold text-slate-800">Backup e Restauração</h3>
-                                <p className="text-slate-500 mt-2 max-w-md mx-auto text-sm md:text-base">Para garantir que você nunca perca o progresso dos seus alunos, faça o download do backup regularmente.</p>
-                            </div>
-                            <div className="flex flex-col gap-4 justify-center pt-4">
-                                <Button onClick={exportDataToJSON} className="py-4 px-8 text-base w-full">
-                                    <i className="fas fa-download"></i> Baixar Backup
-                                </Button>
-                                <div className="relative w-full">
-                                    <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".json" className="hidden" />
-                                    <Button variant="secondary" onClick={() => fileInputRef.current?.click()} className="py-4 px-8 text-base w-full">
-                                        <i className="fas fa-upload"></i> Restaurar de Arquivo
-                                    </Button>
-                                </div>
-                            </div>
-                            <div className="w-full pt-4 border-t border-slate-100 mt-2 text-center text-slate-400 text-xs">
-                                Versão Beta 0.9
-                            </div>
-                        </div>
-                    </div>
+                    <SettingsView
+                        exportDataToJSON={exportDataToJSON}
+                        fileInputRef={fileInputRef}
+                        handleFileUpload={handleFileUpload}
+                    />
                 )}
 
                 {view === 'catalog' && (
-
-                    <div className="max-w-5xl mx-auto animate-fade-in">
-                        <div className="flex flex-col md:flex-row justify-between items-center mb-6 md:mb-8 gap-4">
-                            <div className="flex flex-col">
-                                <h2 className="text-lg md:text-xl font-bold text-slate-800 flex items-center gap-2">
-                                    Gerenciamento de missões e recompensas
-                                    <button onClick={() => { setTutorialStep(1); setShowTutorial(true); }} className="text-indigo-400 hover:text-indigo-600 transition-colors" title="Como funciona?">
-                                        <i className="fas fa-info-circle"></i>
-                                    </button>
-                                </h2>
-                                <p className="text-xs text-slate-500">Crie missões, medalhas e penalidades que estarão disponíveis para todas as escolas.</p>
-                            </div>
-                            <div className="flex bg-white rounded-xl p-1 shadow-sm border border-slate-200">
-                                <button onClick={() => setCatalogTab('tasks')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${catalogTab === 'tasks' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:text-indigo-600'}`}>Missões</button>
-                                <button onClick={() => setCatalogTab('badges')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${catalogTab === 'badges' ? 'bg-indigo-600 text-white shadow' : 'text-slate-500 hover:text-indigo-600'}`}>Medalhas</button>
-                                <button onClick={() => setCatalogTab('penalties')} className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${catalogTab === 'penalties' ? 'bg-red-600 text-white shadow' : 'text-slate-500 hover:text-red-600'}`}>Penalidades</button>
-                            </div>
-                        </div>
-
-                        {catalogTab === 'tasks' && (
-                            <div className="bg-white p-4 md:p-6 rounded-3xl shadow-sm border border-slate-200">
-                                <div className="flex justify-between items-center mb-6">
-                                    <h3 className="text-lg font-bold text-indigo-900"><i className="fas fa-tasks mr-2"></i> Missões Padrão</h3>
-                                    <Button onClick={() => openModal('task', 'create')} className="text-xs">+ Nova Missão</Button>
-                                </div>
-                                <div className="space-y-3">
-                                    {data.taskCatalog.length === 0 && <p className="text-center text-slate-400 py-4 italic">Nenhuma missão cadastrada.</p>}
-                                    {data.taskCatalog.map(t => (
-                                        <div key={t.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl border border-slate-100 hover:border-indigo-200 transition-colors">
-                                            <div className="min-w-0 pr-2">
-                                                <p className="font-bold text-slate-700 truncate">{t.title}</p>
-                                                <p className="text-xs text-slate-500 mb-1">Vale {t.defaultPoints} LXC</p>
-                                                <div className="flex gap-1 flex-wrap">
-                                                    {t.bimesters && t.bimesters.map(b => (
-                                                        <span key={b} className="text-[9px] bg-slate-200 px-1.5 rounded text-slate-600 font-bold">{b}ºB</span>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                            <div className="flex gap-1 flex-shrink-0">
-                                                <Button variant="icon" onClick={(e: any) => { e.stopPropagation(); openModal('task', 'edit', t); }} title="Editar"><i className="fas fa-pen"></i></Button>
-                                                <Button variant="icon" onClick={(e: any) => requestDelete(e, 'task', t.id, undefined, t.title)} title="Excluir"><i className="fas fa-trash text-red-400"></i></Button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-
-                        {catalogTab === 'badges' && (
-                            <div className="bg-white p-4 md:p-6 rounded-3xl shadow-sm border border-slate-200">
-                                <div className="flex justify-between items-center mb-6">
-                                    <h3 className="text-lg font-bold text-amber-600"><i className="fas fa-medal mr-2"></i> Medalhas & Conquistas</h3>
-                                    <Button onClick={() => openModal('badge', 'create')} variant="warning" className="text-xs">+ Nova Medalha</Button>
-                                </div>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                                    {data.badgesCatalog.length === 0 && <p className="col-span-3 text-center text-slate-400 py-4 italic">Nenhuma medalha cadastrada.</p>}
-                                    {data.badgesCatalog.map(b => (
-                                        <div key={b.id} className="flex items-center gap-3 p-3 bg-amber-50 rounded-xl border border-amber-100 relative hover:border-amber-300 transition-colors">
-                                            {b.imageUrl ? (
-                                                <img src={b.imageUrl} alt="Medalha" className="w-10 h-10 rounded-full object-cover border border-amber-200 shadow-sm flex-shrink-0" />
-                                            ) : (
-                                                <div className="w-10 h-10 bg-white rounded-full flex items-center justify-center text-amber-500 shadow-sm flex-shrink-0 text-lg"><i className={`fas ${b.icon}`}></i></div>
-                                            )}
-                                            <div className="flex-1 min-w-0">
-                                                <p className="font-bold text-xs text-amber-900 leading-tight truncate">{b.name}</p>
-                                                {b.rewardValue && b.rewardValue > 0 ? (
-                                                    <p className="text-[9px] text-emerald-600 font-bold">+ {b.rewardValue} LXC</p>
-                                                ) : null}
-                                                <div className="flex gap-1 mt-1 flex-wrap">
-                                                    {b.bimesters && b.bimesters.map(bim => (
-                                                        <span key={bim} className="text-[8px] bg-white border border-amber-200 px-1 rounded text-amber-600 font-bold">{bim}º</span>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                            <div className="flex gap-1 bg-amber-100/50 rounded-lg flex-shrink-0 p-1">
-                                                <button onClick={(e) => { e.stopPropagation(); openModal('badge', 'edit', b); }} className="text-amber-600 hover:text-amber-800 p-1"><i className="fas fa-pen text-xs"></i></button>
-                                                <button onClick={(e) => requestDelete(e, 'badge', b.id, undefined, b.name)} className="text-red-400 hover:text-red-600 p-1"><i className="fas fa-trash text-xs"></i></button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-
-                        {catalogTab === 'penalties' && (
-                            <div className="bg-white p-4 md:p-6 rounded-3xl shadow-sm border border-slate-200">
-                                <div className="flex justify-between items-center mb-6">
-                                    <h3 className="text-lg font-bold text-red-600"><i className="fas fa-gavel mr-2"></i> Penalidades</h3>
-                                    <Button onClick={() => openModal('penalty', 'create')} variant="danger" className="text-xs">+ Nova Penalidade</Button>
-                                </div>
-                                <div className="space-y-4">
-                                    <div className="bg-red-50 p-4 rounded-xl border border-red-100 flex items-start gap-3">
-                                        <i className="fas fa-info-circle text-red-500 mt-0.5"></i>
-                                        <div>
-                                            <h4 className="font-bold text-red-800 text-sm">Área Restrita</h4>
-                                            <p className="text-xs text-red-700 mt-1">Use penalidades com moderação. O objetivo da gamificação é o reforço positivo.</p>
-                                        </div>
-                                    </div>
-
-                                    {data.penaltiesCatalog?.length === 0 && <p className="text-center text-slate-400 py-4 italic">Nenhuma penalidade cadastrada.</p>}
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        {data.penaltiesCatalog?.map(p => (
-                                            <div key={p.id} className="p-4 bg-white rounded-xl border-l-4 border-l-red-500 border border-slate-100 shadow-sm hover:shadow-md transition-all">
-                                                <div className="flex justify-between items-start">
-                                                    <div>
-                                                        <h4 className="font-bold text-slate-800">{p.title}</h4>
-                                                        <p className="text-xs text-slate-500 mt-1 line-clamp-2">{p.description}</p>
-                                                        <span className="inline-block mt-2 text-xs font-bold text-red-600 bg-red-50 px-2 py-1 rounded-lg">
-                                                            {p.defaultPoints} LXC
-                                                        </span>
-                                                    </div>
-                                                    <div className="flex flex-col gap-2">
-                                                        <Button variant="danger" className="py-1 px-3 text-xs" onClick={() => {
-                                                            setPenaltySchoolId(data.schools[0]?.id || '');
-                                                            setApplyPenaltyConfig({ isOpen: true, penaltyId: p.id, amount: p.defaultPoints });
-                                                        }}>Aplicar</Button>
-                                                        <div className="flex justify-end gap-2">
-                                                            <button onClick={() => openModal('penalty', 'edit', p)} className="text-slate-400 hover:text-indigo-600 text-xs"><i className="fas fa-pen"></i></button>
-                                                            <button onClick={(e) => requestDelete(e, 'penalty', p.id, undefined, p.title)} className="text-slate-400 hover:text-red-600 text-xs"><i className="fas fa-trash"></i></button>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                    </div>
+                    <CatalogView
+                        data={data}
+                        catalogTab={catalogTab}
+                        setCatalogTab={setCatalogTab}
+                        setTutorialStep={setTutorialStep}
+                        setShowTutorial={setShowTutorial}
+                        openModal={openModal}
+                        requestDelete={requestDelete}
+                        setPenaltySchoolId={setPenaltySchoolId}
+                        setApplyPenaltyConfig={setApplyPenaltyConfig}
+                    />
                 )}
 
                 {
                     view === 'schools' && (
-                        <div className="max-w-4xl mx-auto animate-fade-in">
-                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 md:mb-8 gap-4">
-                                <h2 className="text-lg md:text-xl font-bold text-slate-800 flex-1">Estrutura Escolar</h2>
-                                <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-                                    {renderCloudSyncButton()}
-                                    <Button onClick={() => openModal('school', 'create')} className="flex-1 sm:flex-none py-2 px-4 whitespace-nowrap">+ Nova Escola</Button>
-                                </div>
-                            </div>
-
-                            <div className="space-y-6">
-                                {data.schools.length === 0 && <div className="text-center py-10 bg-white rounded-2xl border border-slate-200 border-dashed text-slate-400">Nenhuma escola cadastrada. Comece criando uma!</div>}
-                                {data.schools.map(school => (
-                                    <div key={school.id} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-                                        <div className="bg-slate-50 p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-100 gap-4">
-                                            <div className="flex items-center gap-3 w-full sm:w-auto">
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); openModal('school', 'edit', school); }}
-                                                    className="relative group/logo flex-shrink-0 transition-transform hover:scale-105 active:scale-95"
-                                                    title="Clique para alterar o logo da escola"
-                                                >
-                                                    {school.iconUrl ? (
-                                                        <img src={school.iconUrl} alt={school.name} className="w-12 h-12 rounded-lg object-cover bg-white shadow-sm border-2 border-transparent group-hover/logo:border-indigo-400 transition-colors" />
-                                                    ) : (() => {
-                                                        const cleanName = school.name.toLowerCase();
-                                                        let defaultLogo = '';
-                                                        if (cleanName.includes('alípio') || cleanName.includes('alipio')) defaultLogo = '/alipiologo.png';
-                                                        else if (cleanName.includes('aparecida') || cleanName.includes('nsa')) defaultLogo = '/nsalogo.png';
-
-                                                        return defaultLogo ? (
-                                                            <img src={defaultLogo} alt={school.name} className="w-12 h-12 rounded-lg object-contain bg-white shadow-sm border-2 border-transparent group-hover/logo:border-indigo-400 transition-colors" />
-                                                        ) : (
-                                                            <div className="w-12 h-12 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center border-2 border-transparent group-hover/logo:border-indigo-400 transition-colors">
-                                                                <i className="fas fa-school text-xl"></i>
-                                                            </div>
-                                                        );
-                                                    })()}
-                                                    <div className="absolute inset-0 bg-black/40 rounded-lg opacity-0 group-hover/logo:opacity-100 flex items-center justify-center transition-opacity">
-                                                        <i className="fas fa-camera text-white text-xs"></i>
-                                                    </div>
-                                                </button>
-                                                <div className="min-w-0 pr-2">
-                                                    <h3 className="font-bold text-lg text-slate-700 truncate leading-tight">{school.name}</h3>
-                                                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Gestão Escolar</p>
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
-                                                <Button variant="icon" onClick={(e: any) => { e.stopPropagation(); openModal('school', 'edit', school); }} title="Editar Escola"><i className="fas fa-pen"></i></Button>
-                                                <Button variant="icon" onClick={(e: any) => requestDelete(e, 'school', school.id, undefined, school.name)} title="Excluir Escola"><i className="fas fa-trash text-red-400"></i></Button>
-                                                <div className="hidden sm:block w-px h-6 bg-slate-300 mx-2"></div>
-                                                <button onClick={() => { setSelectedSchoolId(school.id); openModal('class', 'create'); }} className="text-indigo-600 text-sm font-bold hover:bg-indigo-50 px-3 py-1 rounded-lg transition-colors border border-indigo-200 bg-white whitespace-nowrap">+ Turma</button>
-                                            </div>
-                                        </div>
-                                        <div className="p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                                            {school.classes?.length === 0 && <p className="text-slate-400 text-sm italic p-2 col-span-full text-center">Nenhuma turma nesta escola.</p>}
-                                            {school.classes?.map(cls => (
-                                                <div key={cls.id} className="border border-slate-200 p-4 rounded-xl hover:border-indigo-300 transition-colors bg-white relative group">
-                                                    <div className="flex flex-col items-start mb-2 pr-16 gap-1 w-full">
-                                                        <h4 className="font-bold text-slate-800 line-clamp-1 break-all pr-2" title={cls.name}>{cls.name}</h4>
-                                                        <div className="flex items-center gap-2 mt-1 flex-wrap">
-                                                            <span className="bg-slate-100 text-slate-500 text-[10px] font-bold px-2 py-1 rounded-full flex-shrink-0">{cls.students?.length || 0} alunos</span>
-                                                            <div className="flex bg-indigo-50 text-indigo-600 rounded-md overflow-hidden text-[10px] font-bold border border-indigo-100 items-center">
-                                                                <span className="px-1.5 py-0.5 border-r border-indigo-100 bg-indigo-100/50" title="Código de Escaneamento"><i className="fas fa-barcode"></i></span>
-                                                                <span className="px-2 py-0.5 tracking-widest">{cls.seed || 'MIGRE_SALA'}</span>
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                    <div className="flex gap-2 mt-4">
-                                                        <button onClick={() => { setSelectedSchoolId(school.id); setSelectedClassId(cls.id); setShowBatchImport(true); }} className="flex-1 bg-emerald-50 text-emerald-600 text-xs font-bold py-2 rounded-lg hover:bg-emerald-100 border border-emerald-100 flex items-center justify-center gap-1">
-                                                            <i className="fas fa-file-import"></i> Importar
-                                                        </button>
-                                                    </div>
-                                                    <div className="absolute top-3 right-3 flex gap-1 bg-white p-1 rounded-lg border border-slate-100">
-                                                        <button onClick={(e) => { e.stopPropagation(); openModal('class', 'edit', cls); }} className="p-1 text-slate-400 hover:text-indigo-500 w-7 h-7 flex items-center justify-center" title="Editar Turma"><i className="fas fa-pen text-xs"></i></button>
-                                                        <button onClick={(e) => requestDelete(e, 'class', cls.id, school.id, cls.name)} className="p-1 text-slate-400 hover:text-red-500 w-7 h-7 flex items-center justify-center" title="Excluir Turma"><i className="fas fa-trash text-xs"></i></button>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
+                        <SchoolManagementView
+                            data={data}
+                            renderCloudSyncButton={renderCloudSyncButton}
+                            openModal={openModal}
+                            requestDelete={requestDelete}
+                            setSelectedSchoolId={setSelectedSchoolId}
+                            setSelectedClassId={setSelectedClassId}
+                            setShowBatchImport={setShowBatchImport}
+                        />
                     )
                 }
 
                 {
                     view === 'dashboard' && (
-                        <div className="flex flex-col h-full animate-fade-in">
-                            <div className="flex flex-col md:flex-row items-center gap-4 mb-4 md:mb-6 bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
-                                <div className="flex-1 w-full md:w-auto">
-                                    <label className="text-[10px] font-bold text-slate-400 uppercase">Escola</label>
-                                    <button
-                                        onClick={() => setModalConfig({ isOpen: true, type: 'school-selector' as any, mode: 'create' })}
-                                        className="w-full flex items-center justify-between py-1 font-bold text-slate-800 group"
-                                    >
-                                        <span className="truncate group-hover:text-indigo-600 transition-colors">{currentSchool?.name || 'Selecione a Escola...'}</span>
-                                        <i className="fas fa-chevron-down text-[10px] opacity-30 group-hover:opacity-100 transition-all"></i>
-                                    </button>
-                                </div>
-                                <div className="hidden md:block w-px h-8 bg-slate-200"></div>
-                                <div className="flex-1 w-full md:w-auto border-t md:border-t-0 border-slate-100 pt-2 md:pt-0">
-                                    <label className="text-[10px] font-bold text-slate-400 uppercase">Turma</label>
-                                    <button
-                                        onClick={() => {
-                                            if (!selectedSchoolId) {
-                                                showToast("Selecione uma escola primeiro.", "info");
-                                                return;
-                                            }
-                                            setModalConfig({ isOpen: true, type: 'class-selector' as any, mode: 'create' });
-                                        }}
-                                        className="w-full flex items-center justify-between py-1 font-bold text-slate-800 group"
-                                    >
-                                        <span className="truncate group-hover:text-indigo-600 transition-colors">{currentClass?.name || 'Selecione a Turma...'}</span>
-                                        <i className="fas fa-chevron-down text-[10px] opacity-30 group-hover:opacity-100 transition-all"></i>
-                                    </button>
-                                </div>
-                                <div className="flex bg-slate-100 rounded-lg p-1 w-full md:w-auto overflow-x-auto justify-between md:justify-start mt-2 md:mt-0">
-                                    {[1, 2, 3, 4].map(b => (
-                                        <button key={b} onClick={() => setCurrentBimester(b as Bimester)} className={`flex-1 md:flex-none px-3 py-1 rounded-md text-xs font-bold transition-all whitespace-nowrap ${currentBimester === b ? 'bg-white shadow text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}>{b}º Bim</button>
-                                    ))}
-                                </div>
-                                {renderCloudSyncButton()}
-                            </div>
-
-                            {!selectedClassId ? (
-                                <div className="flex-1 flex flex-col items-center justify-center text-slate-300 py-20 md:py-0">
-                                    <i className="fas fa-chalkboard-teacher text-6xl mb-4"></i>
-                                    <p className="font-bold text-center">Selecione uma turma acima para começar</p>
-                                </div>
-                            ) : (
-                                <div className="flex flex-col lg:flex-row gap-6 h-full overflow-y-auto lg:overflow-hidden">
-                                    <div className="flex-1 bg-white rounded-3xl border border-slate-200 overflow-hidden flex flex-col shadow-sm min-h-[400px]">
-                                        <div className="p-4 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center bg-slate-50 gap-3">
-                                            <div className="flex items-center gap-2 w-full md:w-auto">
-                                                <button onClick={() => {
-                                                    if (selectedStudentsForTask.length === filteredStudentsList.length && filteredStudentsList.length > 0) {
-                                                        setSelectedStudentsForTask([]);
-                                                        setIndividualScores({});
-                                                    }
-                                                    else {
-                                                        setSelectedStudentsForTask(filteredStudentsList.map(s => s.id));
-                                                        const defaultPts = selectedTaskId ? (isGivingBadge ? 0 : data.taskCatalog.find(t => t.id === selectedTaskId)?.defaultPoints ?? manualPoints) : manualPoints;
-                                                        const newScores: Record<string, number> = {};
-                                                        filteredStudentsList.forEach(s => newScores[s.id] = defaultPts);
-                                                        setIndividualScores(newScores);
-                                                    }
-                                                }} className="bg-white border text-slate-600 hover:bg-slate-100 font-bold px-3 py-1.5 rounded-lg text-xs shadow-sm whitespace-nowrap">
-                                                    {selectedStudentsForTask.length === filteredStudentsList.length && filteredStudentsList.length > 0 ? 'Desmarcar' : 'Todos'}
-                                                </button>
-                                                <div className="relative flex-1 md:flex-none">
-                                                    <i className="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
-                                                    <input
-                                                        type="text"
-                                                        placeholder="Buscar aluno(a)..."
-                                                        value={studentSearch}
-                                                        onChange={(e) => setStudentSearch(e.target.value)}
-                                                        className="w-full md:w-48 pl-8 pr-8 py-1.5 text-xs border border-slate-200 rounded-lg outline-none focus:border-indigo-400 bg-white"
-                                                    />
-                                                    {studentSearch && (
-                                                        <button
-                                                            onClick={() => setStudentSearch('')}
-                                                            className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 transition-colors"
-                                                        >
-                                                            <i className="fas fa-times-circle"></i>
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
-                                            {filteredStudentsList.length === 0 && <div className="text-center py-20 text-slate-400 italic">Nenhum aluno encontrado na busca.</div>}
-                                            {filteredStudentsList.map(student => {
-                                                const isSelected = selectedStudentsForTask.includes(student.id);
-                                                const level = getLevel(student.lxcTotal[currentBimester] || 0, currentBimester);
-                                                return (
-                                                    <div key={student.id}
-                                                        onClick={() => setSelectedStudentsForTask(prev => {
-                                                            if (prev.includes(student.id)) {
-                                                                const newScores = { ...individualScores };
-                                                                delete newScores[student.id];
-                                                                setIndividualScores(newScores);
-                                                                return prev.filter(id => id !== student.id);
-                                                            }
-                                                            const defaultPts = selectedTaskId ? (isGivingBadge ? 0 : data.taskCatalog.find(t => t.id === selectedTaskId)?.defaultPoints ?? manualPoints) : manualPoints;
-                                                            setIndividualScores(s => ({ ...s, [student.id]: defaultPts }));
-                                                            return [...prev, student.id];
-                                                        })}
-                                                        className={`p-3 rounded-xl flex items-center justify-between cursor-pointer border-2 transition-all group ${isSelected ? 'bg-indigo-50 border-indigo-500 shadow-sm' : 'bg-white border-slate-100 hover:border-indigo-200'}`}
-                                                    >
-                                                        <div className="flex items-center gap-3 overflow-hidden">
-                                                            <div className={`w-10 h-10 rounded-full ${level.color} flex items-center justify-center text-white font-bold text-sm shadow-sm flex-shrink-0 relative`}>
-                                                                {student.name.charAt(0)}
-                                                                {student.marked && (
-                                                                    <div
-                                                                        className="absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-white"
-                                                                        style={{ backgroundColor: student.markedColor || '#22c55e' }}
-                                                                    ></div>
-                                                                )}
-                                                            </div>
-                                                            <div className="min-w-0">
-                                                                <div className="flex items-center gap-2">
-                                                                    <p className="font-bold text-slate-700 text-sm truncate">{student.nickname || student.name}</p>
-                                                                    {student.marked && student.markedLabel && (
-                                                                        <span
-                                                                            className="text-[9px] px-1.5 py-0.5 rounded text-white font-bold"
-                                                                            style={{ backgroundColor: student.markedColor || '#22c55e' }}
-                                                                        >
-                                                                            {student.markedLabel}
-                                                                        </span>
-                                                                    )}
-                                                                    {student.nickname && <span className="text-[9px] text-slate-400 hidden sm:inline">({student.name})</span>}
-                                                                </div>
-                                                                <div className="flex gap-2">
-                                                                    {student.registrationId && <span className="text-[9px] bg-slate-100 px-2 rounded-full text-slate-500 whitespace-nowrap">Matr: {student.registrationId}</span>}
-                                                                    <span className="text-[10px] bg-slate-100 px-2 rounded-full text-slate-500 whitespace-nowrap">{level.title}</span>
-                                                                    <a
-                                                                        href={`?view=student-view&studentId=${student.id}`}
-                                                                        onClick={(e) => {
-                                                                            if (!e.ctrlKey && !e.metaKey && !e.shiftKey) {
-                                                                                e.preventDefault();
-                                                                                e.stopPropagation();
-                                                                                setViewingStudentId(student.id);
-                                                                                setView('student-view');
-                                                                            }
-                                                                        }}
-                                                                        className="text-[10px] text-indigo-400 font-bold hover:underline whitespace-nowrap flex items-center gap-1"
-                                                                    >
-                                                                        <i className="fas fa-eye"></i> <i className="fas fa-pen text-[8px]"></i> Ver e editar
-                                                                    </a>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                        <div className="flex items-center gap-4 pl-2 flex-shrink-0">
-                                                            {isSelected && !isGivingBadge ? (
-                                                                <div className="flex items-center gap-1 bg-white rounded-lg p-1" onClick={(e) => e.stopPropagation()}>
-                                                                    <input
-                                                                        type="number"
-                                                                        className={`w-14 text-center border-b-2 bg-transparent font-bold text-sm outline-none ${(individualScores[student.id] ?? manualPoints) < 0 ? 'text-red-500 border-red-200 focus:border-red-400' : 'text-indigo-600 border-indigo-200 focus:border-indigo-400'
-                                                                            } custom-number-input transition-colors`}
-                                                                        value={individualScores[student.id] ?? manualPoints}
-                                                                        onChange={(e) => {
-                                                                            let val = parseInt(e.target.value) || 0;
-                                                                            setIndividualScores(prev => ({ ...prev, [student.id]: Math.min(250, Math.max(-10, val)) }));
-                                                                        }}
-                                                                    />
-                                                                </div>
-                                                            ) : (
-                                                                <span className="font-mono font-bold text-slate-600">{student.lxcTotal[currentBimester] || 0}</span>
-                                                            )}
-
-                                                            {pendingDeleteStudentId === student.id && (
-                                                                <button
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation();
-                                                                        requestDelete(e, 'student', student.id, undefined, student.name);
-                                                                        setPendingDeleteStudentId(null);
-                                                                    }}
-                                                                    className="text-red-400 hover:text-red-600 px-2 animate-bounce"
-                                                                    title="Confirmar Exclusão Definitiva"
-                                                                >
-                                                                    <i className="fas fa-trash-alt"></i>
-                                                                </button>
-                                                            )}
-                                                            <button
-                                                                onClick={(e) => { e.stopPropagation(); openStudentSettings(student); }}
-                                                                className="text-slate-300 hover:text-indigo-500 px-2"
-                                                                title="Configurações do Aluno"
-                                                            >
-                                                                <i className="fas fa-cog"></i>
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-
-                                    <div className="w-full lg:w-80 bg-white rounded-3xl border border-slate-200 p-6 flex flex-col shadow-xl shadow-slate-200/50 lg:h-full h-auto flex-shrink-0">
-                                        <div className="flex bg-slate-100 rounded-xl p-1 mb-6">
-                                            <button onClick={() => setIsGivingBadge(false)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${!isGivingBadge ? 'bg-white shadow text-indigo-600' : 'text-slate-400 hover:text-slate-600'}`}>Dar Pontos</button>
-                                            <button onClick={() => setIsGivingBadge(true)} className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all ${isGivingBadge ? 'bg-white shadow text-amber-500' : 'text-slate-400 hover:text-slate-600'}`}>Dar Medalha</button>
-                                        </div>
-
-                                        <div className="mb-4">
-                                            <div className="flex justify-between items-center mb-2">
-                                                <span className="text-xs font-bold text-slate-400 uppercase">
-                                                    {isGivingBadge ? 'Escolher Medalha' : 'Escolher Missão'}
-                                                </span>
-                                                <button onClick={() => openModal(isGivingBadge ? 'badge' : 'task', 'create')} className="text-[10px] text-indigo-500 font-bold hover:underline">+ Criar Nova</button>
-                                            </div>
-
-                                            <button
-                                                onClick={() => setModalConfig({ isOpen: true, type: 'mission-selector', mode: 'create' })}
-                                                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none hover:border-indigo-500 text-left flex justify-between items-center"
-                                            >
-                                                <span className="truncate">{selectedTaskId ? (isGivingBadge ? data.badgesCatalog.find(b => b.id === selectedTaskId)?.name : data.taskCatalog.find(t => t.id === selectedTaskId)?.title) : '-- Personalizado --'}</span>
-                                                <i className="fas fa-chevron-down text-slate-400"></i>
-                                            </button>
-                                        </div>
-
-                                        {!isGivingBadge && (
-                                            <div className="animate-fade-in space-y-4">
-                                                <div>
-                                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Título / Motivo</label>
-                                                    <Input
-                                                        placeholder="Ex: Participação em Aula"
-                                                        value={manualDesc}
-                                                        onFocus={(e: any) => {
-                                                            if (!manualDesc && !selectedTaskId) {
-                                                                setManualDesc(`Atividade de ${profile?.subject || 'Linguagens'}`);
-                                                            }
-                                                            setTimeout(() => e.target.select(), 10);
-                                                        }}
-                                                        onChange={(e: any) => setManualDesc(e.target.value)}
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Descrição da Missão</label>
-                                                    <Input
-                                                        placeholder="Válido apenas para este lançamento..."
-                                                        value={customMissionDesc}
-                                                        onChange={(e: any) => setCustomMissionDesc(e.target.value)}
-                                                    />
-                                                </div>
-                                                <div className="flex items-center gap-2 justify-center mt-2 bg-slate-50 p-2 rounded-xl border border-slate-100">
-                                                    <button onClick={() => {
-                                                        const minL = selectedTaskId ? (isGivingBadge ? 0 : -10) : -5;
-                                                        setManualPoints(p => Math.max(minL, p - 5));
-                                                    }} className="w-8 h-8 md:w-10 md:h-10 bg-white shadow-sm border border-slate-200 rounded-lg font-bold hover:bg-slate-50 touch-manipulation text-slate-600">-</button>
-                                                    <div className="flex flex-col items-center px-4">
-                                                        <label className="text-[9px] font-bold text-slate-400 uppercase">LXC</label>
-                                                        <input type="number" className="w-16 md:w-20 text-center font-bold text-lg md:text-xl outline-none bg-transparent text-indigo-600" value={manualPoints} onChange={e => {
-                                                            let val = parseInt(e.target.value) || 0;
-                                                            const minL = selectedTaskId ? (isGivingBadge ? 0 : -10) : -5;
-                                                            const maxL = selectedTaskId ? (isGivingBadge ? 50 : 250) : 100;
-                                                            setManualPoints(Math.min(maxL, Math.max(minL, val)));
-                                                        }} />
-                                                    </div>
-                                                    <button onClick={() => {
-                                                        const maxL = selectedTaskId ? (isGivingBadge ? 50 : 250) : 100;
-                                                        setManualPoints(p => Math.min(maxL, p + 5));
-                                                    }} className="w-8 h-8 md:w-10 md:h-10 bg-white shadow-sm border border-slate-200 rounded-lg font-bold hover:bg-slate-50 touch-manipulation text-slate-600">+</button>
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        <div className="mt-auto pt-4 md:pt-0">
-                                            <div className="bg-indigo-50 p-3 rounded-xl mb-4 flex justify-between items-center">
-                                                <span className="text-xs font-bold text-indigo-800">Alunos Selecionados:</span>
-                                                <span className="bg-white text-indigo-600 px-2 py-1 rounded text-xs font-bold shadow-sm">{selectedStudentsForTask.length}</span>
-                                            </div>
-                                            <Button onClick={giveRewards} className="w-full py-4 text-lg" variant={isGivingBadge ? 'warning' : 'primary'} disabled={selectedStudentsForTask.length === 0}>
-                                                {isGivingBadge ? 'Condecorar' : 'Confirmar'}
-                                            </Button>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
+                        <DashboardView
+                            currentSchool={currentSchool}
+                            currentClass={currentClass}
+                            currentBimester={currentBimester}
+                            setCurrentBimester={setCurrentBimester}
+                            setModalConfig={setModalConfig}
+                            renderCloudSyncButton={renderCloudSyncButton}
+                            selectedSchoolId={selectedSchoolId}
+                            selectedClassId={selectedClassId}
+                            data={data}
+                            showToast={showToast}
+                            selectedStudentsForTask={selectedStudentsForTask}
+                            setSelectedStudentsForTask={setSelectedStudentsForTask}
+                            filteredStudentsList={filteredStudentsList}
+                            individualScores={individualScores}
+                            setIndividualScores={setIndividualScores}
+                            selectedTaskId={selectedTaskId}
+                            setSelectedTaskId={setSelectedTaskId}
+                            isGivingBadge={isGivingBadge}
+                            setIsGivingBadge={setIsGivingBadge}
+                            manualPoints={manualPoints}
+                            setManualPoints={setManualPoints}
+                            manualDesc={manualDesc}
+                            setManualDesc={setManualDesc}
+                            customMissionDesc={customMissionDesc}
+                            setCustomMissionDesc={setCustomMissionDesc}
+                            studentSearch={studentSearch}
+                            setStudentSearch={setStudentSearch}
+                            setView={setView}
+                            setViewingStudentId={setViewingStudentId}
+                            pendingDeleteStudentId={pendingDeleteStudentId}
+                            setPendingDeleteStudentId={setPendingDeleteStudentId}
+                            requestDelete={requestDelete}
+                            openModal={openModal}
+                            giveRewards={giveRewards}
+                            openStudentSettings={(student) => setStudentSettingsConfig(student)}
+                            getLevel={getLevel}
+                            profile={profile}
+                        />
                     )
                 }
             </main >
