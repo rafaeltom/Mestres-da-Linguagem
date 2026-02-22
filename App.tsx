@@ -1714,7 +1714,7 @@ export default function App() {
                             requestDelete={requestDelete}
                             openModal={openModal}
                             giveRewards={giveRewards}
-                            openStudentSettings={(student) => setStudentSettingsConfig(student)}
+                            openStudentSettings={openStudentSettings}
                             getLevel={getLevel}
                             profile={profile}
                         />
