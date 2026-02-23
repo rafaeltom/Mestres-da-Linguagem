@@ -6,107 +6,76 @@ service cloud.firestore {
     function isAuthenticated() {
       return request.auth != null;
     }
-    function isOwner(resource) {
-      return request.auth.uid == resource.data.ownerId;
+    
+    // Checks if the user is the owner (stamped in ownerId)
+    function isOwner() {
+      return isAuthenticated() && (
+        (request.method == 'create' && request.resource.data.get('ownerId', '') == request.auth.uid) ||
+        (request.method != 'create' && resource.data.get('ownerId', '') == request.auth.uid)
+      );
     }
-    function isCollaboratorOf(classId) {
-      return exists(/databases/$(database)/documents/classes/$(classId)) &&
-        request.auth.uid in
-          get(/databases/$(database)/documents/classes/$(classId)).data.get('sharedWith', []);
+
+    // Checks if user is a collaborator of the class
+    function isCollaboratorOfClass(classId) {
+      return isAuthenticated() && exists(/databases/$(database)/documents/classes/$(classId)) &&
+        request.auth.uid in get(/databases/$(database)/documents/classes/$(classId)).data.get('sharedWith', []);
     }
 
     // ─── Users (profile) ────────────────────────────────────────────────────
-    // Only the teacher herself can read/write her own profile.
     match /users/{uid} {
-      allow read, write: if request.auth.uid == uid;
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && request.auth.uid == uid;
     }
 
     // ─── Schools ────────────────────────────────────────────────────────────
-    // Only the owner can access their schools. Collaborators never touch schools.
     match /schools/{id} {
-      allow read, write: if isAuthenticated() && isOwner(resource);
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isOwner();
     }
 
     // ─── Classes ────────────────────────────────────────────────────────────
-    // Owner: full control.
-    // Collaborator: read + update ONLY to add their UID to sharedWith (no other fields).
-    // Anyone authed: read by seed (needed for the join-by-seed flow).
     match /classes/{id} {
-      allow read: if isAuthenticated() &&
-        (isOwner(resource) || isCollaboratorOf(id) ||
-         // Allow reading to look up by seed during join flow
-         true);
-      allow create, delete: if isAuthenticated() && isOwner(resource);
-      allow update: if isAuthenticated() && (
-        isOwner(resource) ||
-        // Collaborator may ONLY append their own UID to sharedWith; nothing else changes.
-        (resource.data.ownerId == request.resource.data.ownerId &&
-         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['sharedWith']))
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (
+        isOwner() || 
+        (request.method == 'update' && (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['sharedWith'])
+        ))
       );
     }
 
     // ─── Students ───────────────────────────────────────────────────────────
-    // Owner: full control (including delete).
-    // Collaborator: read + create + update (e.g. special marking, nickname).
-    //   Cannot change ownerId, classId or schoolId.
-    //   Cannot delete students.
     match /students/{id} {
-      allow read: if isAuthenticated() &&
-        (isOwner(resource) || isCollaboratorOf(resource.data.classId));
-
-      allow create: if isAuthenticated() && (
-        isOwner(resource) ||
-        // Collaborator creates with the original ownerId preserved
-        (isCollaboratorOf(request.resource.data.classId) &&
-         request.resource.data.ownerId == resource.data.get('ownerId', request.resource.data.ownerId))
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (
+        isOwner() || 
+        isCollaboratorOfClass(resource.data.get('classId', '')) ||
+        isCollaboratorOfClass(request.resource.data.get('classId', ''))
       );
-
-      allow update: if isAuthenticated() && (
-        isOwner(resource) ||
-        // Collaborator can update any field EXCEPT the identity fields
-        (isCollaboratorOf(resource.data.classId) &&
-         !request.resource.data.diff(resource.data)
-           .affectedKeys().hasAny(['ownerId', 'classId', 'schoolId']))
-      );
-
-      // Only the owner can delete students.
-      allow delete: if isAuthenticated() && isOwner(resource);
     }
 
     // ─── Transactions ────────────────────────────────────────────────────────
-    // Owner: full control.
-    // Collaborator: full CRUD on transactions whose classId belongs to a shared class.
-    //   When creating, ownerId must be the collaborator's own UID.
     match /transactions/{id} {
-      allow read: if isAuthenticated() &&
-        (isOwner(resource) ||
-         (resource.data.classId != null && isCollaboratorOf(resource.data.classId)));
-
-      allow create: if isAuthenticated() && (
-        isOwner(resource) ||
-        (request.resource.data.classId != null &&
-         isCollaboratorOf(request.resource.data.classId) &&
-         // Collaborator stamps their own UID as ownerId
-         request.resource.data.ownerId == request.auth.uid)
-      );
-
-      // Collaborator can edit or delete any transaction referencing a class shared with them.
-      allow update, delete: if isAuthenticated() && (
-        isOwner(resource) ||
-        (resource.data.classId != null && isCollaboratorOf(resource.data.classId))
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && (
+        isOwner() || 
+        isCollaboratorOfClass(resource.data.get('classId', '')) ||
+        isCollaboratorOfClass(request.resource.data.get('classId', ''))
       );
     }
 
-    // ─── Catalog (tasks, badges, penalties) ─────────────────────────────────
-    // Personal catalogs — owner only. Collaborators use the owner's catalog via UI (future).
+    // ─── Catalog ─────────────────────────────────────────────────────────────
     match /catalog_tasks/{id} {
-      allow read, write: if isAuthenticated() && isOwner(resource);
+      allow read: if isAuthenticated(); 
+      allow write: if isAuthenticated() && isOwner();
     }
     match /catalog_badges/{id} {
-      allow read, write: if isAuthenticated() && isOwner(resource);
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isOwner();
     }
     match /catalog_penalties/{id} {
-      allow read, write: if isAuthenticated() && isOwner(resource);
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isOwner();
     }
   }
 }

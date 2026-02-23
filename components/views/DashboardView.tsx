@@ -1,16 +1,8 @@
 import React, { ReactNode, useMemo } from 'react';
 import { Button } from '../ui/SharedUI';
-import { School, ClassGroup, Bimester, TaskDefinition } from '../../types';
+import { School, ClassGroup, Bimester, TaskDefinition, CATEGORY_CONFIG } from '../../types';
 import { AppData } from '../../services/localStorageService';
 
-// Category-specific settings
-const CATEGORY_CONFIG: Record<string, { label: string; icon: string; color: string; default: number; min: number; max: number }> = {
-    'Daily': { label: 'Missão Diária', icon: 'fa-sun', color: 'text-sky-500', default: 20, min: 10, max: 100 },
-    'Weekly': { label: 'Missão Semanal', icon: 'fa-calendar-week', color: 'text-purple-500', default: 50, min: 20, max: 200 },
-    'Side Quest': { label: 'Side Quest', icon: 'fa-map-signs', color: 'text-emerald-500', default: 10, min: 5, max: 50 },
-    'Boss': { label: 'Missão Principal', icon: 'fa-dragon', color: 'text-rose-500', default: 100, min: 50, max: 250 },
-    'Custom': { label: '— Tarefa Rápida —', icon: 'fa-cogs', color: 'text-slate-500', default: 10, min: 5, max: 100 },
-};
 
 const getTaskCategory = (task?: TaskDefinition) => task?.category || 'Custom';
 const getCatConfig = (task?: TaskDefinition) => CATEGORY_CONFIG[getTaskCategory(task)] || CATEGORY_CONFIG['Custom'];
@@ -90,7 +82,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </div>
                 <div className="hidden md:block w-px h-8 bg-slate-200 flex-shrink-0"></div>
                 <div className="w-full md:w-36 lg:w-40 flex-shrink-0 border-t md:border-t-0 border-slate-100 pt-2 md:pt-0">
-                    <label className="text-[10px] font-bold text-slate-400 uppercase">Turma</label>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
+                        Turma
+                        {currentClass?.shared && <i className="fas fa-share-alt text-indigo-400 animate-pulse"></i>}
+                    </label>
                     <button
                         onClick={() => {
                             if (!selectedSchoolId) {
@@ -101,9 +96,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         }}
                         className="w-full flex items-center justify-between py-1 text-sm font-bold text-slate-800 group"
                     >
-                        <span className="truncate group-hover:text-indigo-600 transition-colors block text-left" title={currentClass?.name || 'Selecione a Turma...'}>{currentClass?.name || 'Selecione a Turma...'}</span>
+                        <span className="truncate group-hover:text-indigo-600 transition-colors block text-left" title={currentClass?.name || 'Selecione a Turma...'}>
+                            {currentClass?.name || 'Selecione a Turma...'}
+                        </span>
                         <i className="fas fa-chevron-down text-[10px] opacity-30 group-hover:opacity-100 transition-all ml-1 flex-shrink-0"></i>
                     </button>
+                    {currentClass?.shared && currentSchool?.ownerName && (
+                        <p className="text-[8px] text-indigo-400 font-bold -mt-1 truncate opacity-70">Dono: {currentSchool.ownerName}</p>
+                    )}
                 </div>
                 <div className="flex bg-slate-100 rounded-lg p-1 w-full md:w-auto overflow-x-auto justify-between md:justify-start mt-2 md:mt-0">
                     {[1, 2, 3, 4].map(b => (

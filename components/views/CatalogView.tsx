@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Button } from '../ui/SharedUI';
-import { TaskDefinition, Badge, PenaltyDefinition, LevelRule, Bimester } from '../../types';
+import { TaskDefinition, Badge, PenaltyDefinition, LevelRule, Bimester, CATEGORY_CONFIG } from '../../types';
 import { AppData } from '../../services/localStorageService';
 import { LEVEL_RULES, LEVEL_COLORS } from '../../utils/gamificationRules';
 
@@ -15,12 +15,13 @@ export interface CatalogViewProps {
     setPenaltySchoolId: (id: string) => void;
     setApplyPenaltyConfig: (config: any) => void;
     onSaveLevelRules: (rules: Partial<Record<Bimester, LevelRule[]>>) => void;
+    currentUser: any;
 }
 
 export const CatalogView: React.FC<CatalogViewProps> = ({
     data, catalogTab, setCatalogTab, setTutorialStep, setShowTutorial,
     openModal, requestDelete, setPenaltySchoolId, setApplyPenaltyConfig,
-    onSaveLevelRules
+    onSaveLevelRules, currentUser
 }) => {
     // levels editing state
     const [editingRules, setEditingRules] = useState<Partial<Record<Bimester, LevelRule[]>> | null>(null);
@@ -58,7 +59,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
     };
 
     return (
-        <div className="max-w-5xl mx-auto animate-fade-in">
+        <div className="max-w-5xl mx-auto animate-fade-in pb-20">
             <div className="flex flex-col md:flex-row justify-between items-center mb-6 md:mb-8 gap-4">
                 <div className="flex flex-col">
                     <h2 className="text-lg md:text-xl font-bold text-slate-800 flex items-center gap-2">
@@ -107,11 +108,11 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                         <div className="flex gap-1.5 flex-wrap">
                             {([
                                 { value: 'all', label: 'Todas', cls: 'bg-slate-100 text-slate-600 hover:bg-slate-200' },
-                                { value: 'Daily', label: 'Diária', cls: 'bg-sky-100 text-sky-600 hover:bg-sky-200' },
-                                { value: 'Weekly', label: 'Semanal', cls: 'bg-purple-100 text-purple-600 hover:bg-purple-200' },
-                                { value: 'Side Quest', label: 'Side Quest', cls: 'bg-emerald-100 text-emerald-600 hover:bg-emerald-200' },
-                                { value: 'Boss', label: 'Boss', cls: 'bg-rose-100 text-rose-600 hover:bg-rose-200' },
-                                { value: 'Custom', label: 'Rápida', cls: 'bg-slate-100 text-slate-500 hover:bg-slate-200' },
+                                ...Object.entries(CATEGORY_CONFIG).map(([key, config]) => ({
+                                    value: key,
+                                    label: config.label.replace('Missão ', '').replace('— ', '').replace(' —', ''),
+                                    cls: `${config.color.replace('text-', 'bg-')}/10 ${config.color} hover:${config.color.replace('text-', 'bg-')}/20`
+                                }))
                             ] as { value: string; label: string; cls: string }[]).map(cat => (
                                 <button
                                     key={cat.value}
@@ -138,37 +139,55 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 {data.taskCatalog.length === 0 && <p className="col-span-full text-center text-slate-400 py-4 italic">Nenhuma tarefa cadastrada.</p>}
                                 {data.taskCatalog.length > 0 && filtered.length === 0 && <p className="col-span-full text-center text-slate-400 py-4 italic">Nenhuma tarefa encontrada para os filtros selecionados.</p>}
-                                {filtered.map(t => (
-                                    <div key={t.id} className="p-4 bg-white rounded-xl border-l-4 border-l-indigo-500 border border-slate-100 shadow-sm hover:shadow-md transition-all">
-                                        <div className="flex justify-between items-start">
-                                            <div className="flex-1 pr-2">
-                                                <div className="flex items-center gap-1.5 mb-1 flex-wrap">
-                                                    {(!t.category || t.category === 'Custom') && <span className="text-[9px] bg-slate-100 text-slate-600 font-bold px-1.5 py-0.5 rounded flex items-center gap-1 uppercase tracking-wider"><i className="fas fa-cogs"></i> Custom</span>}
-                                                    {t.category === 'Daily' && <span className="text-[9px] bg-sky-100 text-sky-600 font-bold px-1.5 py-0.5 rounded flex items-center gap-1 uppercase tracking-wider"><i className="fas fa-sun"></i> Diária</span>}
-                                                    {t.category === 'Weekly' && <span className="text-[9px] bg-purple-100 text-purple-600 font-bold px-1.5 py-0.5 rounded flex items-center gap-1 uppercase tracking-wider"><i className="fas fa-calendar-week"></i> Semanal</span>}
-                                                    {t.category === 'Side Quest' && <span className="text-[9px] bg-emerald-100 text-emerald-600 font-bold px-1.5 py-0.5 rounded flex items-center gap-1 uppercase tracking-wider"><i className="fas fa-map-signs"></i> Secundária</span>}
-                                                    {t.category === 'Boss' && <span className="text-[9px] bg-rose-100 text-rose-600 font-bold px-1.5 py-0.5 rounded flex items-center gap-1 uppercase tracking-wider"><i className="fas fa-dragon"></i> Global/Boss</span>}
+                                {filtered.map(t => {
+                                    const isOwner = !t.ownerId || t.ownerId === currentUser?.uid;
+                                    return (
+                                        <div key={t.id} className={`p-4 bg-white rounded-xl border-l-4 border border-slate-100 shadow-sm hover:shadow-md transition-all ${isOwner ? 'border-l-indigo-500' : 'border-l-emerald-500 bg-emerald-50/10'}`}>
+                                            <div className="flex justify-between items-start">
+                                                <div className="flex-1 pr-2">
+                                                    <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+                                                        {(() => {
+                                                            const cat = t.category || 'Custom';
+                                                            const config = CATEGORY_CONFIG[cat] || CATEGORY_CONFIG['Custom'];
+                                                            const bgColor = config.color.replace('text-', 'bg-');
+                                                            return (
+                                                                <span className={`text-[9px] ${bgColor}/10 ${config.color} font-bold px-1.5 py-0.5 rounded flex items-center gap-1 uppercase tracking-wider`}>
+                                                                    <i className={`fas ${config.icon}`}></i> {config.label.replace('Missão ', '').replace('— ', '').replace(' —', '')}
+                                                                </span>
+                                                            );
+                                                        })()}
+                                                        {t.shared && (
+                                                            <span className="text-[9px] bg-emerald-600 text-white font-bold px-1.5 py-0.5 rounded flex items-center gap-1 uppercase tracking-wider shadow-sm" title={isOwner ? "Compartilhada com seus colaboradores" : "Compartilhada por outro professor"}>
+                                                                <i className="fas fa-share-alt"></i> {isOwner ? 'Publicado' : 'Colaboração'}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <h4 className="font-bold text-slate-800 leading-tight">{t.title}</h4>
+                                                    {!isOwner && t.ownerName && <p className="text-[9px] text-emerald-600 font-bold italic">Criado por: {t.ownerName}</p>}
+                                                    <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">{t.description || 'Sem descrição.'}</p>
+                                                    <div className="flex items-center gap-2 mt-2">
+                                                        <span className="inline-block text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">
+                                                            {t.defaultPoints} LXC
+                                                        </span>
+                                                        {t.bimesters && t.bimesters.map(b => (
+                                                            <span key={b} className="text-[9px] bg-slate-100 px-1.5 py-1 rounded text-slate-500 font-bold">{b}ºB</span>
+                                                        ))}
+                                                    </div>
                                                 </div>
-                                                <h4 className="font-bold text-slate-800 leading-tight">{t.title}</h4>
-                                                <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">{t.description || 'Sem descrição.'}</p>
-                                                <div className="flex items-center gap-2 mt-2">
-                                                    <span className="inline-block text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">
-                                                        {t.defaultPoints} LXC
-                                                    </span>
-                                                    {t.bimesters && t.bimesters.map(b => (
-                                                        <span key={b} className="text-[9px] bg-slate-100 px-1.5 py-1 rounded text-slate-500 font-bold">{b}ºB</span>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                            <div className="flex flex-col gap-2 flex-shrink-0 items-end">
-                                                <div className="flex justify-end gap-2">
-                                                    <button onClick={(e: any) => { e.stopPropagation(); openModal('task', 'edit', t); }} className="text-slate-400 hover:text-indigo-600 p-1"><i className="fas fa-pen"></i></button>
-                                                    <button onClick={(e: any) => requestDelete(e, 'task', t.id, undefined, t.title)} className="text-slate-400 hover:text-red-600 p-1"><i className="fas fa-trash"></i></button>
+                                                <div className="flex flex-col gap-2 flex-shrink-0 items-end">
+                                                    {isOwner ? (
+                                                        <div className="flex justify-end gap-2">
+                                                            <button onClick={(e: any) => { e.stopPropagation(); openModal('task', 'edit', t); }} className="text-slate-400 hover:text-indigo-600 p-1"><i className="fas fa-pen"></i></button>
+                                                            <button onClick={(e: any) => requestDelete(e, 'task', t.id, undefined, t.title)} className="text-slate-400 hover:text-red-600 p-1"><i className="fas fa-trash"></i></button>
+                                                        </div>
+                                                    ) : (
+                                                        <i className="fas fa-lock text-slate-300 text-xs" title="Item compartilhado (somente leitura)"></i>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         );
                     })()}
@@ -183,39 +202,56 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         {data.badgesCatalog.length === 0 && <p className="col-span-full text-center text-slate-400 py-4 italic">Nenhuma medalha cadastrada.</p>}
-                        {data.badgesCatalog.map(b => (
-                            <div key={b.id} className="p-4 bg-white rounded-xl border-l-4 border-l-amber-500 border border-slate-100 shadow-sm hover:shadow-md transition-all">
-                                <div className="flex gap-4">
-                                    {b.imageUrl ? (
-                                        <img src={b.imageUrl} alt="Medalha" className="w-12 h-12 rounded-full object-cover border border-amber-200 shadow-sm flex-shrink-0" />
-                                    ) : (
-                                        <div className="w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center text-amber-500 shadow-sm flex-shrink-0 text-xl"><i className={`fas ${b.icon}`}></i></div>
-                                    )}
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex justify-between items-start">
-                                            <div className="pr-2">
-                                                <h4 className="font-bold text-slate-800">{b.name}</h4>
-                                                <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-2">{b.description}</p>
-                                                <div className="flex items-center gap-2 mt-2 flex-wrap">
-                                                    {b.rewardValue && b.rewardValue > 0 ? (
-                                                        <span className="inline-block text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg">
-                                                            + {b.rewardValue} LXC
-                                                        </span>
-                                                    ) : null}
-                                                    {b.bimesters && b.bimesters.map(bim => (
-                                                        <span key={bim} className="text-[9px] bg-slate-100 px-1.5 py-1 rounded text-slate-500 font-bold">{bim}ºB</span>
-                                                    ))}
+                        {data.badgesCatalog.map(b => {
+                            const isOwner = !b.ownerId || b.ownerId === currentUser?.uid;
+                            return (
+                                <div key={b.id} className={`p-4 bg-white rounded-xl border-l-4 border border-slate-100 shadow-sm hover:shadow-md transition-all ${isOwner ? 'border-l-amber-500' : 'border-l-emerald-500 bg-emerald-50/10'}`}>
+                                    <div className="flex gap-4">
+                                        <div className="relative">
+                                            {b.imageUrl ? (
+                                                <img src={b.imageUrl} alt="Medalha" className="w-12 h-12 rounded-full object-cover border border-amber-200 shadow-sm flex-shrink-0" />
+                                            ) : (
+                                                <div className="w-12 h-12 bg-amber-50 rounded-full flex items-center justify-center text-amber-500 shadow-sm flex-shrink-0 text-xl"><i className={`fas ${b.icon}`}></i></div>
+                                            )}
+                                            {b.shared && (
+                                                <div className="absolute -bottom-1 -right-1 w-5 h-5 bg-emerald-600 text-white rounded-full flex items-center justify-center text-[8px] border-2 border-white shadow-sm" title="Compartilhada">
+                                                    <i className="fas fa-share-alt"></i>
                                                 </div>
-                                            </div>
-                                            <div className="flex gap-2 flex-shrink-0">
-                                                <button onClick={(e) => { e.stopPropagation(); openModal('badge', 'edit', b); }} className="text-slate-400 hover:text-indigo-600 p-1"><i className="fas fa-pen"></i></button>
-                                                <button onClick={(e) => requestDelete(e, 'badge', b.id, undefined, b.name)} className="text-slate-400 hover:text-red-600 p-1"><i className="fas fa-trash"></i></button>
+                                            )}
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex justify-between items-start">
+                                                <div className="pr-2">
+                                                    <h4 className="font-bold text-slate-800">{b.name}</h4>
+                                                    {!isOwner && b.ownerName && <p className="text-[9px] text-emerald-600 font-bold italic">De: {b.ownerName}</p>}
+                                                    <p className="text-[10px] text-slate-500 mt-0.5 line-clamp-2">{b.description}</p>
+                                                    <div className="flex items-center gap-2 mt-2 flex-wrap">
+                                                        {b.rewardValue && b.rewardValue > 0 ? (
+                                                            <span className="inline-block text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg">
+                                                                + {b.rewardValue} LXC
+                                                            </span>
+                                                        ) : null}
+                                                        {b.bimesters && b.bimesters.map(bim => (
+                                                            <span key={bim} className="text-[9px] bg-slate-100 px-1.5 py-1 rounded text-slate-500 font-bold">{bim}ºB</span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                                <div className="flex gap-2 flex-shrink-0">
+                                                    {isOwner ? (
+                                                        <>
+                                                            <button onClick={(e) => { e.stopPropagation(); openModal('badge', 'edit', b); }} className="text-slate-400 hover:text-indigo-600 p-1"><i className="fas fa-pen"></i></button>
+                                                            <button onClick={(e) => requestDelete(e, 'badge', b.id, undefined, b.name)} className="text-slate-400 hover:text-red-600 p-1"><i className="fas fa-trash"></i></button>
+                                                        </>
+                                                    ) : (
+                                                        <i className="fas fa-lock text-slate-300 text-xs" title="Somente leitura"></i>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 </div>
             )}
@@ -237,29 +273,42 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
 
                         {data.penaltiesCatalog?.length === 0 && <p className="text-center text-slate-400 py-4 italic">Nenhuma penalidade cadastrada.</p>}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {data.penaltiesCatalog?.map(p => (
-                                <div key={p.id} className="p-4 bg-white rounded-xl border-l-4 border-l-red-500 border border-slate-100 shadow-sm hover:shadow-md transition-all">
-                                    <div className="flex justify-between items-start">
-                                        <div>
-                                            <h4 className="font-bold text-slate-800">{p.title}</h4>
-                                            <p className="text-xs text-slate-500 mt-1 line-clamp-2">{p.description}</p>
-                                            <span className="inline-block mt-2 text-xs font-bold text-red-600 bg-red-50 px-2 py-1 rounded-lg">
-                                                {p.defaultPoints} LXC
-                                            </span>
-                                        </div>
-                                        <div className="flex flex-col gap-2">
-                                            <Button variant="danger" className="py-1 px-3 text-xs" onClick={() => {
-                                                setPenaltySchoolId(data.schools[0]?.id || '');
-                                                setApplyPenaltyConfig({ isOpen: true, penaltyId: p.id, amount: p.defaultPoints });
-                                            }}>Aplicar</Button>
-                                            <div className="flex justify-end gap-2">
-                                                <button onClick={() => openModal('penalty', 'edit', p)} className="text-slate-400 hover:text-indigo-600 text-xs"><i className="fas fa-pen"></i></button>
-                                                <button onClick={(e) => requestDelete(e, 'penalty', p.id, undefined, p.title)} className="text-slate-400 hover:text-red-600 text-xs"><i className="fas fa-trash"></i></button>
+                            {data.penaltiesCatalog?.map(p => {
+                                const isOwner = !p.ownerId || p.ownerId === currentUser?.uid;
+                                return (
+                                    <div key={p.id} className={`p-4 bg-white rounded-xl border-l-4 border border-slate-100 shadow-sm hover:shadow-md transition-all ${isOwner ? 'border-l-red-500' : 'border-l-emerald-500 bg-emerald-50/10'}`}>
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <h4 className="font-bold text-slate-800 leading-tight">{p.title}</h4>
+                                                    {p.shared && <i className="fas fa-share-alt text-[10px] text-emerald-600" title="Compartilhada"></i>}
+                                                </div>
+                                                {!isOwner && p.ownerName && <p className="text-[9px] text-emerald-600 font-bold italic mb-1">Dono: {p.ownerName}</p>}
+                                                <p className="text-xs text-slate-500 mt-1 line-clamp-2">{p.description}</p>
+                                                <span className="inline-block mt-2 text-xs font-bold text-red-600 bg-red-50 px-2 py-1 rounded-lg">
+                                                    {p.defaultPoints} LXC
+                                                </span>
+                                            </div>
+                                            <div className="flex flex-col gap-2">
+                                                <Button variant="danger" className="py-1 px-3 text-xs" onClick={() => {
+                                                    setPenaltySchoolId(data.schools[0]?.id || '');
+                                                    setApplyPenaltyConfig({ isOpen: true, penaltyId: p.id, amount: p.defaultPoints });
+                                                }}>Aplicar</Button>
+                                                {isOwner ? (
+                                                    <div className="flex justify-end gap-2">
+                                                        <button onClick={() => openModal('penalty', 'edit', p)} className="text-slate-400 hover:text-indigo-600 text-xs"><i className="fas fa-pen"></i></button>
+                                                        <button onClick={(e) => requestDelete(e, 'penalty', p.id, undefined, p.title)} className="text-slate-400 hover:text-red-600 text-xs"><i className="fas fa-trash"></i></button>
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex justify-end">
+                                                        <i className="fas fa-lock text-slate-300 text-[10px]" title="Somente leitura"></i>
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     </div>
                 </div>

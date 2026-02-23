@@ -1,0 +1,79 @@
+type User @table {
+  username: String!
+  email: String!
+  passwordHash: String!
+  createdAt: Timestamp!
+  lxcBalance: Int!
+  level: Int!
+  displayName: String
+  profilePictureUrl: String
+  lastLoginAt: Timestamp
+}
+
+type LearningModule @table {
+  title: String!
+  description: String!
+  difficultyLevel: String!
+  createdAt: Timestamp!
+  imageUrl: String
+  durationEstimate: Int
+}
+
+type LearningActivity @table {
+  learningModule: LearningModule
+  title: String!
+  description: String!
+  activityType: String!
+  lxcReward: Int!
+  createdAt: Timestamp!
+  instructions: String
+  pointsPossible: Int
+}
+
+type UserActivityProgress @table {
+  user: User
+  learningActivity: LearningActivity
+  status: String!
+  earnedLXC: Int!
+  createdAt: Timestamp!
+  updatedAt: Timestamp!
+  score: Int
+  completionDate: Timestamp
+  userResponse: String
+}
+
+type Reward @table {
+  name: String!
+  description: String!
+  lxcCost: Int!
+  type: String!
+  stockCount: Int!
+  createdAt: Timestamp!
+  imageUrl: String
+  redemptionInstructions: String
+}
+
+type UserRewardRedemption @table {
+  user: User
+  reward: Reward
+  redemptionDate: Timestamp!
+  lxcSpent: Int!
+  status: String!
+  createdAt: Timestamp!
+  shippingAddress: String
+}
+
+type Medal @table {
+  name: String!
+  description: String!
+  imageUrl: String!
+  createdAt: Timestamp!
+  criteriaDescription: String
+}
+
+type UserMedal @table {
+  user: User
+  medal: Medal
+  earnedAt: Timestamp!
+  createdAt: Timestamp!
+}

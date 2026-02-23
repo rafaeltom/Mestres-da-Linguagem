@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { Bimester, Student, School, ClassGroup, Transaction, TaskDefinition, Badge, LevelRule, TeacherProfileData, PenaltyDefinition } from './types';
+import { Bimester, Student, School, ClassGroup, Transaction, TaskDefinition, Badge, LevelRule, TeacherProfileData, PenaltyDefinition, CATEGORY_CONFIG } from './types';
 import { getLevel, getNextLevel } from './utils/gamificationRules';
 import {
     loadData,
@@ -39,7 +39,17 @@ import {
     firestoreUpdateTransaction,
     firestoreBatchImportStudents,
     firestoreGiveRewardAtomic,
-    firestoreSyncAll
+    firestoreSyncAll,
+    firestoreLookupBySeed,
+    firestoreReadSharedClassFull,
+    firestoreFetchSharedCatalog,
+    firestoreJoinClass,
+    firestoreLeaveClass,
+    firestoreRemoveCollaborator,
+    firestoreFetchMySharedClasses,
+    firestoreGetSchool,
+    firestoreFetchTransactionsByClasses,
+    firestoreMigrateLegacyTransactions
 } from './services/firestoreService';
 import { auth } from './services/firebase';
 
@@ -407,7 +417,6 @@ export default function App() {
     const [selectedClassId, setSelectedClassId] = useState<string>('');
     const [viewingStudentId, setViewingStudentId] = useState<string>('');
     const [currentBimester, setCurrentBimester] = useState<Bimester>(1);
-
     // Estados de Gerenciamento
     const [modalConfig, setModalConfig] = useState<{
         isOpen: boolean;
@@ -425,6 +434,26 @@ export default function App() {
         itemName?: string;
     }>({ isOpen: false, type: null, id: null });
 
+    // Lista de IDs de turmas compartilhadas (para checagem rápida)
+    const [sharedClassIds, setSharedClassIds] = useState<string[]>([]);
+    const [resolvedTeacherNames, setResolvedTeacherNames] = useState<Record<string, string>>({});
+
+    const resolveTeacherNames = async (uids: string[]) => {
+        const uniqueUids = [...new Set(uids.filter(id => id && !resolvedTeacherNames[id]))];
+        if (uniqueUids.length === 0) return;
+
+        const newNames: Record<string, string> = { ...resolvedTeacherNames };
+        for (const uid of uniqueUids) {
+            try {
+                const profile = await getTeacherProfile(uid);
+                newNames[uid] = profile?.displayName || profile?.name || "Professor Externo";
+            } catch (err) {
+                newNames[uid] = "Professor Externo";
+            }
+        }
+        setResolvedTeacherNames(newNames);
+    };
+
     // Campos de Formulário
     const [formData, setFormData] = useState({
         name: '',
@@ -436,7 +465,8 @@ export default function App() {
         bimesters: [1, 2, 3, 4] as Bimester[],
         autoUnlockEnabled: false,
         autoUnlockType: 'LXC' as 'LXC' | 'TASKS',
-        autoUnlockThreshold: 0
+        autoUnlockThreshold: 0,
+        shared: false // Opt-in de compartilhamento para catálogo
     });
 
     const [showBatchImport, setShowBatchImport] = useState(false);
@@ -465,8 +495,22 @@ export default function App() {
 
     const [pendingDeleteStudentId, setPendingDeleteStudentId] = useState<string | null>(null);
 
-    // Estado para pontuação individual nesta rodada
     const [individualScores, setIndividualScores] = useState<Record<string, number>>({});
+
+    const handleSetManualPoints = (newVal: number | ((prev: number) => number)) => {
+        setManualPoints(prev => {
+            const result = typeof newVal === 'function' ? newVal(prev) : newVal;
+            // Sync all currently selected students to this new score
+            if (selectedStudentsForTask.length > 0) {
+                const updatedScores = { ...individualScores };
+                selectedStudentsForTask.forEach(sid => {
+                    updatedScores[sid] = result;
+                });
+                setIndividualScores(updatedScores);
+            }
+            return result;
+        });
+    };
 
     // Estado para Penalidades
     const [catalogTab, setCatalogTab] = useState<'tasks' | 'badges' | 'penalties' | 'levels'>('tasks');
@@ -502,7 +546,6 @@ export default function App() {
                 setCurrentUser(user);
                 localStorage.setItem('mestres_auth_token', 'firebase_session');
 
-                // Firestore Load
                 try {
                     console.log("[Auth] User logged in, fetching cloud data...", user.uid);
                     const cloudData = await fetchTeacherData(user.uid);
@@ -526,38 +569,305 @@ export default function App() {
                     // Profile
                     let cloudProfile = await getTeacherProfile(user.uid);
                     if (cloudProfile) {
-                        // Patch email if missing and update state
                         if (!cloudProfile.email && user.email) {
                             cloudProfile = { ...cloudProfile, email: user.email };
                         }
                         setProfile(cloudProfile);
                         saveProfile(cloudProfile);
                     } else {
-                        // New user: create profile with email
                         const newProfile = { ...profile, email: user.email || '' };
                         setProfile(newProfile);
                         saveProfile(newProfile);
                         await saveTeacherProfile(user.uid, newProfile);
                     }
 
+                    // --- SYNC UNIFICADO (PROJETO INTEGRADO + PROPRIO) ---
+                    await syncAllRelevantData(user.uid, cloudData);
+
                 } catch (err) {
                     console.error("[Auth] Erro ao carregar do Firestore:", err);
-                    showToast("Erro ao carregar dados da nuvem. Verifique sua conexão.", "error");
+                    showToast("Erro ao carregar dados da nuvem.", "error");
                 }
-
             } else {
                 setIsAuthenticated(false);
                 setCurrentUser(null);
                 localStorage.removeItem('mestres_auth_token');
-                // Optional: Clear data or load local demo data
-                // setData({ schools: [], transactions: [], taskCatalog: [], badgesCatalog: [], penaltiesCatalog: [] });
             }
             setAuthLoading(false);
         });
         return () => unsubscribe();
     }, []);
 
+    // --- LÓGICA DE SINCRONIZAÇÃO UNIFICADA (PROPRIO + COMPARTILHADO) ---
+
+    const syncAllRelevantData = async (uid: string, initialOwnedData: AppData) => {
+        try {
+            console.log("[Sync Unificado] Iniciando carregamento de metadados e turmas compartilhadas...");
+
+            // 1. Pegar turmas onde sou colaborador
+            const shared = await firestoreFetchMySharedClasses(uid);
+            const newSharedIds: string[] = [];
+            const catalogOwnersFetched = new Set<string>();
+            const allUidsToResolve: string[] = [];
+
+            // Começamos com os dados próprios (já trazem escolas, turmas e alunos do dono)
+            let updatedData = { ...initialOwnedData };
+
+            // 2. Injetar turmas compartilhadas no objeto de dados local
+            for (const cls of shared) {
+                newSharedIds.push(cls.id);
+                if (cls.ownerId) allUidsToResolve.push(cls.ownerId);
+                if (cls.sharedWith) allUidsToResolve.push(...cls.sharedWith);
+
+                // Carregar Alunos (Transações virão no passo unificado)
+                const { students } = await firestoreReadSharedClassFull(cls.id);
+                const studentsWithFlag = students.map(s => ({ ...s, shared: true }));
+                const classWithStudents: ClassGroup = { ...cls, students: studentsWithFlag, shared: true };
+
+                // Buscar metadados da escola
+                let schoolData = null;
+                if (cls.schoolId) schoolData = await firestoreGetSchool(cls.schoolId);
+
+                const schoolId = cls.schoolId || `shared_school_${cls.ownerId}`;
+                const schoolName = schoolData?.name || (cls as any).schoolName || "Escola Compartilhada";
+
+                let school = updatedData.schools.find(s => s.id === schoolId);
+                if (!school) {
+                    school = {
+                        id: schoolId,
+                        name: schoolName,
+                        iconUrl: schoolData?.iconUrl,
+                        classes: [],
+                        shared: true,
+                        ownerId: cls.ownerId
+                    };
+                    updatedData.schools.push(school);
+                }
+
+                if (!school.classes) school.classes = [];
+                school.classes = school.classes.filter(c => c.id !== cls.id);
+                school.classes.push(classWithStudents);
+
+                // Carregar Catálogos
+                if (!catalogOwnersFetched.has(cls.ownerId)) {
+                    const catalogs = await firestoreFetchSharedCatalog(cls.ownerId);
+                    const ownerProfile = await getTeacherProfile(cls.ownerId);
+                    const ownerName = ownerProfile?.displayName || ownerProfile?.name || "Professor Externo";
+
+                    if (school.shared) school.ownerName = ownerName;
+
+                    const taskIds = new Set(updatedData.taskCatalog.map(t => t.id));
+                    updatedData.taskCatalog = [...updatedData.taskCatalog, ...catalogs.tasks.filter(t => !taskIds.has(t.id)).map(t => ({ ...t, ownerName, shared: true }))];
+
+                    const badgeIds = new Set(updatedData.badgesCatalog.map(b => b.id));
+                    updatedData.badgesCatalog = [...updatedData.badgesCatalog, ...catalogs.badges.filter(b => !badgeIds.has(b.id)).map(b => ({ ...b, ownerName, shared: true }))];
+
+                    const penaltyIds = new Set(updatedData.penaltiesCatalog.map(p => p.id));
+                    updatedData.penaltiesCatalog = [...updatedData.penaltiesCatalog, ...catalogs.penalties.filter(p => !penaltyIds.has(p.id)).map(p => ({ ...p, ownerName, shared: true }))];
+
+                    catalogOwnersFetched.add(cls.ownerId);
+                }
+            }
+
+            // 3. COLETA UNIFICADA DE TRANSAÇÕES POR CLASS_ID
+            // Pegamos TODAS as turmas presentes no sistema (Próprias + Compartilhadas)
+            const allClassIds: string[] = [];
+            updatedData.schools.forEach(s => {
+                s.classes?.forEach(c => {
+                    allClassIds.push(c.id);
+                });
+            });
+
+            console.log(`[Sync Unificado] Buscando transações para ${allClassIds.length} turmas...`);
+            const allTransactions = await firestoreFetchTransactionsByClasses(allClassIds);
+            updatedData.transactions = allTransactions;
+
+            // 4. Finalização do Estado
+            setData(updatedData);
+            saveData(updatedData);
+            setSharedClassIds(newSharedIds);
+
+            if (allUidsToResolve.length > 0) resolveTeacherNames(allUidsToResolve);
+            console.log("[Sync Unificado] Concluído com sucesso.");
+
+        } catch (err) {
+            console.error("[Sync Unificado] Erro fatal:", err);
+            showToast("Erro ao sincronizar histórico compartilhado.", "error");
+        }
+    };
+
+    // Função de migração para o usuário acionar manualmente se houver dados antigos "sumidos"
+    const handleMigrateDatabase = async () => {
+        const uid = auth.currentUser?.uid;
+        if (!uid) return;
+
+        setIsSyncing(true);
+        setSyncMessage('Migrando dados...');
+        try {
+            const count = await firestoreMigrateLegacyTransactions(uid, data);
+            if (count > 0) {
+                showToast(`${count} transações vinculadas com sucesso!`, "success");
+                // Recarregar tudo para refletir as mudanças
+                const cloudData = await fetchTeacherData(uid);
+                await syncAllRelevantData(uid, cloudData);
+            } else {
+                showToast("Nenhum dado legado pendente encontrado.", "info");
+            }
+        } catch (err: any) {
+            console.error(err);
+            showToast("Erro na migração: " + err.message, "error");
+        } finally {
+            setIsSyncing(false);
+            setSyncMessage('');
+        }
+    };
+
+    const handleJoinClass = async (seed: string) => {
+        if (!currentUser) return;
+        setIsSyncing(true);
+        try {
+            const classInfo = await firestoreLookupBySeed(seed);
+            if (!classInfo) {
+                showToast("Código (seed) não encontrado.", "error");
+                return;
+            }
+
+            if (classInfo.ownerId === currentUser.uid) {
+                showToast("Você já é o dono desta turma.", "info");
+                return;
+            }
+
+            if (classInfo.sharedWith?.includes(currentUser.uid)) {
+                showToast("Você já participa desta turma.", "info");
+                return;
+            }
+
+            await firestoreJoinClass(currentUser.uid, classInfo.id);
+            const cloudData = await fetchTeacherData(currentUser.uid);
+            await syncAllRelevantData(currentUser.uid, cloudData);
+            showToast("Sucesso! Você agora colabora nesta turma.", "success");
+        } catch (err) {
+            console.error(err);
+            showToast("Erro ao entrar na turma.", "error");
+        } finally {
+            setIsSyncing(false);
+        }
+    };
+
+    const handleLeaveClass = async (classId: string) => {
+        if (!currentUser) return;
+        setIsSyncing(true);
+        try {
+            await firestoreLeaveClass(currentUser.uid, classId);
+
+            // Remover localmente
+            setData(prev => {
+                const updated = { ...prev };
+                // 1. Filtrar turmas e escolas vázias
+                updated.schools = updated.schools.map(s => ({
+                    ...s,
+                    classes: s.classes?.filter(c => c.id !== classId)
+                })).filter(s => !s.shared || (s.classes && s.classes.length > 0));
+
+                // 2. Limpar transações órfãs desta turma
+                updated.transactions = updated.transactions.filter(tx => tx.classId !== classId);
+
+                saveData(updated);
+                return updated;
+            });
+
+            setSharedClassIds(prev => prev.filter(id => id !== classId));
+            showToast("Você saiu da turma.", "success");
+        } catch (err) {
+            console.error(err);
+            showToast("Erro ao sair da turma.", "error");
+        } finally {
+            setIsSyncing(false);
+        }
+    };
+
+    const handleLeaveSchool = async (schoolId: string) => {
+        if (!currentUser) return;
+        setIsSyncing(true);
+        try {
+            // Resolver classes antes de limpar
+            const school = data.schools.find(s => s.id === schoolId);
+            if (!school || !school.shared) {
+                setIsSyncing(false);
+                return;
+            }
+
+            const classIds = school.classes?.map(c => c.id) || [];
+            for (const cid of classIds) {
+                await firestoreLeaveClass(currentUser.uid, cid);
+            }
+
+            // Remover localmente
+            setData(prev => {
+                const updated = { ...prev };
+                // 1. Remover a escola
+                updated.schools = updated.schools.filter(s => s.id !== schoolId);
+                // 2. Limpar transações de todas as classes removidas
+                updated.transactions = updated.transactions.filter(tx => !classIds.includes(tx.classId || ''));
+
+                saveData(updated);
+                return updated;
+            });
+
+            setSharedClassIds(prev => prev.filter(id => !classIds.includes(id)));
+            showToast("Você saiu da escola.", "success");
+        } catch (err) {
+            console.error(err);
+            showToast("Erro ao sair da escola.", "error");
+        } finally {
+            setIsSyncing(false);
+        }
+    };
+
+    const handleRemoveCollaborator = async (collaboratorUid: string, classId: string) => {
+        try {
+            await firestoreRemoveCollaborator(collaboratorUid, classId);
+
+            setData(prev => {
+                const updated = { ...prev };
+                updated.schools.forEach(s => {
+                    s.classes?.forEach(c => {
+                        if (c.id === classId && c.sharedWith) {
+                            c.sharedWith = c.sharedWith.filter(uid => uid !== collaboratorUid);
+                        }
+                    });
+                });
+                saveData(updated);
+                return updated;
+            });
+
+            showToast("Colaborador removido.", "info");
+        } catch (err) {
+            console.error(err);
+            showToast("Erro ao remover colaborador.", "error");
+        }
+    };
+
     // --- NOTIFICATION STATE ---
+    // --- MODAL & CONFIRM STATES ---
+    const [confirmConfig, setConfirmConfig] = useState<{
+        isOpen: boolean;
+        title: string;
+        message: string;
+        confirmLabel?: string;
+        onConfirm: () => void;
+        variant?: 'danger' | 'warning' | 'primary' | 'success';
+    }>({
+        isOpen: false,
+        title: '',
+        message: '',
+        onConfirm: () => { },
+    });
+
+    const triggerConfirm = (config: Omit<typeof confirmConfig, 'isOpen'>) => {
+        setConfirmConfig({ ...config, isOpen: true });
+    };
+
     const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' | 'info'; isOpen: boolean }>({ message: '', type: 'info', isOpen: false });
 
     const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
@@ -768,14 +1078,15 @@ export default function App() {
                     3: { start: '', end: '' },
                     4: { start: '', end: '' }
                 },
-                category: dataItem.category || 'Custom'
+                category: dataItem.category || 'Custom',
+                shared: dataItem.shared || false
             });
         } else {
             // Reset form
             setFormData({
                 name: '',
                 description: '',
-                points: 10,
+                points: (type === 'penalty') ? -10 : 10,
                 icon: 'fa-star',
                 imageUrl: '',
                 rewardValue: 0,
@@ -790,7 +1101,8 @@ export default function App() {
                     3: { start: '', end: '' },
                     4: { start: '', end: '' }
                 },
-                category: 'Custom'
+                category: 'Custom',
+                shared: false
             });
         }
     };
@@ -880,7 +1192,7 @@ export default function App() {
 
     const closeModal = () => {
         setModalConfig({ ...modalConfig, isOpen: false });
-        setFormData({ name: '', description: '', points: 10, icon: 'fa-medal', imageUrl: '', rewardValue: 0, bimesters: [1, 2, 3, 4] });
+        setFormData({ name: '', description: '', points: 10, icon: 'fa-medal', imageUrl: '', rewardValue: 0, bimesters: [1, 2, 3, 4], shared: false });
     };
 
     const handleModalSave = async () => {
@@ -894,12 +1206,20 @@ export default function App() {
         const uid = auth.currentUser?.uid;
 
         if (type === 'school') {
+            let iconUrl = formData.schoolIconUrl;
+
+            // Lógica automática para logos
+            if (!iconUrl) {
+                if (name.includes("EE Nossa Senhora Aparecida")) iconUrl = "nsalogo.png";
+                else if (name.includes("EMEF Professor Alípio Corrêa Neto") || name.includes("EMEF Alípio Corrêa Neto")) iconUrl = "alipiologo.png";
+            }
+
             if (mode === 'create') {
                 const newSchool: School = {
                     id: uuidv4(),
                     name,
                     classes: [],
-                    iconUrl: formData.schoolIconUrl,
+                    iconUrl: iconUrl,
                     bimesterDates: formData.bimesterDates
                 };
                 newData.schools.push(newSchool);
@@ -909,7 +1229,7 @@ export default function App() {
                 const school = newData.schools.find((s: School) => s.id === editingId);
                 if (school) {
                     school.name = name;
-                    school.iconUrl = formData.schoolIconUrl;
+                    school.iconUrl = iconUrl;
                     school.bimesterDates = formData.bimesterDates;
                     if (uid) firestoreUpdateSchool(school);
                 }
@@ -935,15 +1255,33 @@ export default function App() {
             }
         }
         else if (type === 'task') {
-            const clampedPoints = Math.max(5, Math.min(250, Number(points)));
+            const clampedPoints = Math.max(5, Math.min(250, Number(formData.points)));
             if (mode === 'create') {
-                const newItem: TaskDefinition = { id: uuidv4(), title: name, description, defaultPoints: clampedPoints, bimesters: bimesters, category: category as any };
+                const newItem: TaskDefinition = {
+                    id: uuidv4(),
+                    title: name,
+                    description,
+                    defaultPoints: clampedPoints,
+                    bimesters: bimesters,
+                    category: category as any,
+                    shared: formData.shared,
+                    ownerId: uid,
+                    ownerName: profile?.displayName || profile?.name || "Professor"
+                };
                 newData.taskCatalog.push(newItem);
                 if (uid) firestoreAddCatalogItem(uid, 'task', newItem);
             } else {
                 const task = newData.taskCatalog.find((t: TaskDefinition) => t.id === editingId);
                 if (task) {
-                    task.title = name; task.description = description; task.defaultPoints = clampedPoints; task.bimesters = bimesters; task.category = category as any;
+                    task.title = name;
+                    task.description = description;
+                    task.defaultPoints = clampedPoints;
+                    task.bimesters = bimesters;
+                    task.category = category as any;
+                    task.shared = formData.shared;
+                    // Preserve owner metadata if it exists, otherwise set it
+                    if (!task.ownerId) task.ownerId = uid;
+                    if (!task.ownerName) task.ownerName = profile?.displayName || profile?.name || "Professor";
                     if (uid) firestoreUpdateCatalogItem('task', task);
                 }
             }
@@ -952,27 +1290,63 @@ export default function App() {
             const clampedReward = Math.max(0, Math.min(100, Number(rewardValue)));
             const criteria = formData.autoUnlockEnabled ? { type: formData.autoUnlockType, threshold: Number(formData.autoUnlockThreshold) } : undefined;
             if (mode === 'create') {
-                const newItem: Badge = { id: uuidv4(), name, icon, imageUrl, description, rewardValue: clampedReward, bimesters: bimesters, autoUnlockCriteria: criteria };
+                const newItem: Badge = {
+                    id: uuidv4(),
+                    name,
+                    icon,
+                    imageUrl,
+                    description,
+                    rewardValue: clampedReward,
+                    bimesters: bimesters,
+                    autoUnlockCriteria: criteria,
+                    shared: formData.shared,
+                    ownerId: uid,
+                    ownerName: profile?.displayName || profile?.name || "Professor"
+                };
                 newData.badgesCatalog.push(newItem);
                 if (uid) firestoreAddCatalogItem(uid, 'badge', newItem);
             } else {
                 const badge = newData.badgesCatalog.find((b: Badge) => b.id === editingId);
                 if (badge) {
-                    badge.name = name; badge.icon = icon; badge.imageUrl = imageUrl; badge.description = description; badge.rewardValue = Number(rewardValue); badge.bimesters = bimesters; badge.autoUnlockCriteria = criteria;
+                    badge.name = name;
+                    badge.icon = icon;
+                    badge.imageUrl = imageUrl;
+                    badge.description = description;
+                    badge.rewardValue = Number(rewardValue);
+                    badge.bimesters = bimesters;
+                    badge.autoUnlockCriteria = criteria;
+                    badge.shared = formData.shared;
+                    if (!badge.ownerId) badge.ownerId = uid;
+                    if (!badge.ownerName) badge.ownerName = profile?.displayName || profile?.name || "Professor";
                     if (uid) firestoreUpdateCatalogItem('badge', badge);
                 }
             }
         }
         else if (type === 'penalty') {
-            const clampedPoints = Math.max(-30, Math.min(-1, -Math.abs(Number(points))));
+            const clampedPoints = Math.max(-30, Math.min(-1, -Math.abs(Number(formData.points))));
             if (mode === 'create') {
-                const newItem = { id: uuidv4(), title: name, description, defaultPoints: clampedPoints, bimesters: bimesters };
+                const newItem: PenaltyDefinition = {
+                    id: uuidv4(),
+                    title: name,
+                    description,
+                    defaultPoints: clampedPoints,
+                    bimesters: bimesters,
+                    shared: formData.shared,
+                    ownerId: uid,
+                    ownerName: profile?.displayName || profile?.name || "Professor"
+                };
                 newData.penaltiesCatalog.push(newItem);
                 if (uid) firestoreAddCatalogItem(uid, 'penalty', newItem);
             } else {
                 const pen = newData.penaltiesCatalog.find((p: PenaltyDefinition) => p.id === editingId);
                 if (pen) {
-                    pen.title = name; pen.description = description; pen.defaultPoints = clampedPoints; pen.bimesters = bimesters;
+                    pen.title = name;
+                    pen.description = description;
+                    pen.defaultPoints = clampedPoints;
+                    pen.bimesters = bimesters;
+                    pen.shared = formData.shared;
+                    if (!pen.ownerId) pen.ownerId = uid;
+                    if (!pen.ownerName) pen.ownerName = profile?.displayName || profile?.name || "Professor";
                     if (uid) firestoreUpdateCatalogItem('penalty', pen);
                 }
             }
@@ -1014,9 +1388,9 @@ export default function App() {
                     }
                 });
             });
+            if (uid && id) firestoreDeleteStudent(id);
             if (studentSettingsConfig.isOpen && studentSettingsConfig.studentId === id) setStudentSettingsConfig({ ...studentSettingsConfig, isOpen: false });
             if (view === 'student-view' && viewingStudentId === id) setView('dashboard');
-            if (uid && id) firestoreDeleteStudent(id);
         }
         else if (type === 'task') {
             newData.taskCatalog = newData.taskCatalog.filter((t: TaskDefinition) => t.id !== id);
@@ -1137,9 +1511,13 @@ export default function App() {
             if (!badge) return;
 
             selectedStudentsForTask.forEach(sid => {
+                const school = currentData.schools.find((s: School) => s.classes?.some((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid)));
+                const cls = school?.classes?.find((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid));
+
                 const tx: Transaction = {
                     id: uuidv4(),
                     studentId: sid,
+                    classId: cls?.id,
                     type: 'BADGE',
                     amount: badge.rewardValue || 0,
                     description: manualDesc || badge.name, // Use edited name or original
@@ -1175,9 +1553,13 @@ export default function App() {
                     return;
                 }
 
+                const school = currentData.schools.find((s: School) => s.classes?.some((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid)));
+                const cls = school?.classes?.find((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid));
+
                 const tx: Transaction = {
                     id: uuidv4(),
                     studentId: sid,
+                    classId: cls?.id,
                     type,
                     amount: points,
                     description: desc,
@@ -1188,8 +1570,6 @@ export default function App() {
                 };
 
                 currentData.transactions.push(tx);
-                const school = currentData.schools.find((s: School) => s.classes?.some((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid)));
-                const cls = school?.classes?.find((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid));
                 const student = cls?.students?.find((st: Student) => st.id === sid);
                 if (student) {
                     student.lxcTotal[currentBimester] = (student.lxcTotal[currentBimester] || 0) + points;
@@ -1218,6 +1598,7 @@ export default function App() {
                             const autoTx: Transaction = {
                                 id: uuidv4(),
                                 studentId: student.id,
+                                classId: cls?.id,
                                 type: 'BADGE',
                                 amount: badge.rewardValue || 0,
                                 description: badge.name,
@@ -1263,23 +1644,26 @@ export default function App() {
         const file = e.target.files?.[0];
         if (!file) return;
 
-        const confirmRestore = window.confirm("Atenção: A restauração substituirá os dados locais atuais. Para que as alterações reflitam na nuvem (Firestore), você precisará clicar em 'Salvar na Nuvem' no topo da tela do Dashboard após a restauração. Deseja continuar?");
-        if (!confirmRestore) {
-            e.target.value = ''; // Reset input
-            return;
-        }
-
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-            if (importDataFromJSON(ev.target?.result as string)) {
-                showToast("Backup restaurado!", "success");
-                setData(loadData());
-                setProfile(loadProfile()); // Refresh profile if it was imported
-            } else {
-                showToast("Arquivo inválido.", "error");
+        triggerConfirm({
+            title: "Restaurar Backup",
+            message: "Atenção: A restauração substituirá os dados locais atuais. Deseja continuar?",
+            confirmLabel: "Sim, Restaurar",
+            variant: "warning",
+            onConfirm: () => {
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    if (importDataFromJSON(ev.target?.result as string)) {
+                        showToast("Backup restaurado!", "success");
+                        setData(loadData());
+                        setProfile(loadProfile());
+                    } else {
+                        showToast("Arquivo inválido.", "error");
+                    }
+                };
+                reader.readAsText(file);
             }
-        };
-        reader.readAsText(file);
+        });
+        e.target.value = ''; // Reset input
     };
 
     // --- PENALTY APPLICATION SYSTEM ---
@@ -1296,20 +1680,23 @@ export default function App() {
         const txPromises: Promise<void>[] = [];
 
         penaltyStudents.forEach(sid => {
+            const school = currentData.schools.find((s: School) => s.classes?.some((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid)));
+            const cls = school?.classes?.find((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid));
+
             const tx: Transaction = {
                 id: uuidv4(),
                 studentId: sid,
+                classId: cls?.id,
                 type: 'PENALTY',
-                amount: applyPenaltyConfig.amount, // Usa o montante editado
-                description: penalty.title, // Pode ser customizada no futuro se quiser
+                amount: applyPenaltyConfig.amount,
+                description: penalty.title,
                 bimester: currentBimester,
-                date: new Date()
+                date: new Date(),
+                teacherName: profile.displayName || profile.name
             };
 
             // Update Local
             currentData.transactions.push(tx);
-            const school = currentData.schools.find((s: School) => s.classes?.some((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid)));
-            const cls = school?.classes?.find((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid));
             const student = cls?.students?.find((st: Student) => st.id === sid);
             if (student) {
                 student.lxcTotal[currentBimester] = (student.lxcTotal[currentBimester] || 0) + applyPenaltyConfig.amount;
@@ -1365,44 +1752,49 @@ export default function App() {
             return;
         }
 
-        const confirmData = confirm(`Deseja realmente transferir ${studentToMove.name} para a nova turma selecionada?`);
-        if (!confirmData) return;
+        triggerConfirm({
+            title: "Transferir Aluno",
+            message: `Deseja realmente transferir ${studentToMove.name} para a nova turma selecionada?`,
+            confirmLabel: "Sim, Transferir",
+            variant: "primary",
+            onConfirm: async () => {
+                const uid = auth.currentUser?.uid;
+                let currentData = { ...data };
 
-        const uid = auth.currentUser?.uid;
-        let currentData = { ...data };
+                // Remove from source
+                const sourceSchoolIndex = currentData.schools.findIndex(s => s.id === sourceSchoolId);
+                const sourceClassIndex = currentData.schools[sourceSchoolIndex].classes!.findIndex(c => c.id === sourceClassId);
+                currentData.schools[sourceSchoolIndex].classes![sourceClassIndex].students =
+                    currentData.schools[sourceSchoolIndex].classes![sourceClassIndex].students!.filter(s => s.id !== studentToMove!.id);
 
-        // Remove from source
-        const sourceSchoolIndex = currentData.schools.findIndex(s => s.id === sourceSchoolId);
-        const sourceClassIndex = currentData.schools[sourceSchoolIndex].classes!.findIndex(c => c.id === sourceClassId);
-        currentData.schools[sourceSchoolIndex].classes![sourceClassIndex].students =
-            currentData.schools[sourceSchoolIndex].classes![sourceClassIndex].students!.filter(s => s.id !== studentId);
+                // Update the student's class reference
+                const movedStudent = { ...studentToMove!, classId: targetClassId };
 
-        // Update the student's class reference
-        studentToMove.classId = targetClassId;
+                // Add to target
+                const targetSchoolIndex = currentData.schools.findIndex(s => s.id === targetSchoolId);
+                const targetClassIndex = currentData.schools[targetSchoolIndex].classes!.findIndex(c => c.id === targetClassId);
+                if (!currentData.schools[targetSchoolIndex].classes![targetClassIndex].students) {
+                    currentData.schools[targetSchoolIndex].classes![targetClassIndex].students = [];
+                }
+                currentData.schools[targetSchoolIndex].classes![targetClassIndex].students!.push(movedStudent);
 
-        // Add to target
-        const targetSchoolIndex = currentData.schools.findIndex(s => s.id === targetSchoolId);
-        const targetClassIndex = currentData.schools[targetSchoolIndex].classes!.findIndex(c => c.id === targetClassId);
-        if (!currentData.schools[targetSchoolIndex].classes![targetClassIndex].students) {
-            currentData.schools[targetSchoolIndex].classes![targetClassIndex].students = [];
-        }
-        currentData.schools[targetSchoolIndex].classes![targetClassIndex].students!.push(studentToMove);
+                setData(currentData);
+                saveData(currentData);
 
-        setData(currentData);
-        saveData(currentData);
+                if (uid) {
+                    try {
+                        await firestoreUpdateStudent(movedStudent);
+                    } catch (err) {
+                        console.error("Error during transfer sync: ", err);
+                        showToast("Alteração salva localmente. Verifique sincronização em nuvem.", "info");
+                    }
+                }
 
-        if (uid) {
-            try {
-                await firestoreUpdateStudent(studentToMove);
-            } catch (err) {
-                console.error("Error during transfer sync: ", err);
-                showToast("Alteração salva localmente. Verifique sincronização em nuvem.", "info");
+                setStudentSettingsConfig({ isOpen: false, studentId: null, tab: 'transfer' });
+                setTransferConfig({ targetSchoolId: '', targetClassId: '' });
+                showToast('Aluno transferido com sucesso!', "success");
             }
-        }
-
-        setStudentSettingsConfig({ isOpen: false, studentId: null, tab: 'transfer' });
-        setTransferConfig({ targetSchoolId: '', targetClassId: '' });
-        showToast('Aluno transferido com sucesso!', "success");
+        });
     };
 
     // --- PROFILE LOGIC ---
@@ -1545,6 +1937,20 @@ export default function App() {
 
     // Bound getLevel using current custom rules
     const getLevelBound = (points: number, bimester: number) => getLevel(points, bimester as Bimester, (data as any).customLevelRules);
+
+    // --- AUTOMATIC NAME RESOLUTION FOR COLLABORATORS ---
+    useEffect(() => {
+        if (view !== 'schools') return;
+        const uids: string[] = [];
+        data.schools.forEach(s => {
+            s.classes?.forEach(c => {
+                if (c.sharedWith) uids.push(...c.sharedWith);
+                if (c.ownerId) uids.push(c.ownerId);
+            });
+            if ((s as any).ownerId) uids.push((s as any).ownerId);
+        });
+        if (uids.length > 0) resolveTeacherNames(uids);
+    }, [view, data.schools]);
 
     // --- AUTH CHECK ---
     if (!isAuthenticated) {
@@ -1698,8 +2104,9 @@ export default function App() {
                 {view === 'settings' && (
                     <SettingsView
                         exportDataToJSON={exportDataToJSON}
-                        fileInputRef={fileInputRef}
                         handleFileUpload={handleFileUpload}
+                        fileInputRef={fileInputRef}
+                        onMigrateDatabase={handleMigrateDatabase}
                     />
                 )}
 
@@ -1715,23 +2122,29 @@ export default function App() {
                         setPenaltySchoolId={setPenaltySchoolId}
                         setApplyPenaltyConfig={setApplyPenaltyConfig}
                         onSaveLevelRules={handleSaveLevelRules}
+                        currentUser={currentUser}
                     />
                 )}
-
-                {
-                    view === 'schools' && (
-                        <SchoolManagementView
-                            data={data}
-                            renderCloudSyncButton={renderCloudSyncButton}
-                            openModal={openModal}
-                            requestDelete={requestDelete}
-                            setSelectedSchoolId={setSelectedSchoolId}
-                            setSelectedClassId={setSelectedClassId}
-                            setShowBatchImport={setShowBatchImport}
-                            setShowEditStudents={setShowEditStudents}
-                        />
-                    )
-                }
+                {view === 'schools' && (
+                    <SchoolManagementView
+                        data={data}
+                        renderCloudSyncButton={renderCloudSyncButton}
+                        openModal={openModal}
+                        requestDelete={requestDelete}
+                        setSelectedSchoolId={setSelectedSchoolId}
+                        setSelectedClassId={setSelectedClassId}
+                        setShowBatchImport={setShowBatchImport}
+                        setShowEditStudents={setShowEditStudents}
+                        onJoinClass={handleJoinClass}
+                        onLeaveClass={handleLeaveClass}
+                        onLeaveSchool={handleLeaveSchool}
+                        onRemoveCollaborator={handleRemoveCollaborator}
+                        showToast={showToast}
+                        sharedClassIds={sharedClassIds}
+                        currentUser={currentUser}
+                        resolvedTeacherNames={resolvedTeacherNames}
+                    />
+                )}
 
                 {
                     view === 'dashboard' && (
@@ -1756,7 +2169,7 @@ export default function App() {
                             isGivingBadge={isGivingBadge}
                             setIsGivingBadge={setIsGivingBadge}
                             manualPoints={manualPoints}
-                            setManualPoints={setManualPoints}
+                            setManualPoints={handleSetManualPoints}
                             manualDesc={manualDesc}
                             setManualDesc={setManualDesc}
                             customMissionDesc={customMissionDesc}
@@ -1887,16 +2300,36 @@ export default function App() {
                                                     setManualDesc(task.title);
                                                     setCustomMissionDesc(task.description);
                                                     setManualPoints(task.defaultPoints);
+
+                                                    // NEW: Also update individual scores for selected students if any
+                                                    if (selectedStudentsForTask.length > 0) {
+                                                        const newScores = { ...individualScores };
+                                                        selectedStudentsForTask.forEach(sid => {
+                                                            newScores[sid] = task.defaultPoints;
+                                                        });
+                                                        setIndividualScores(newScores);
+                                                    }
+
                                                     closeModal();
                                                     setMissionSearch('');
                                                 }}
                                                 className="w-full p-3 rounded-xl border border-slate-100 hover:border-indigo-500 hover:bg-indigo-50 transition-all flex items-center justify-between group text-left"
                                             >
-                                                <div>
-                                                    <h4 className="font-bold text-sm text-slate-700 group-hover:text-indigo-700">{task.title}</h4>
+                                                <div className="flex-1">
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <i className={`fas ${CATEGORY_CONFIG[task.category || 'Custom']?.icon || 'fa-tasks'} ${CATEGORY_CONFIG[task.category || 'Custom']?.color || 'text-slate-400'} text-xs`}></i>
+                                                        <h4 className="font-bold text-sm text-slate-700 group-hover:text-indigo-700">{task.title}</h4>
+                                                    </div>
                                                     <p className="text-[10px] text-slate-400 line-clamp-1">{task.description}</p>
                                                 </div>
-                                                <div className="font-bold text-indigo-600 bg-indigo-100 px-2 py-1 rounded text-[10px]">{task.defaultPoints} pts</div>
+                                                <div className="flex flex-col items-end gap-1">
+                                                    <div className="font-bold text-indigo-600 bg-indigo-100 px-2 py-1 rounded text-[10px]">{task.defaultPoints} pts</div>
+                                                    {(task as any).shared && (
+                                                        <span className="text-[8px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-100 uppercase tracking-tighter" title="Compartilhada por outro professor">
+                                                            <i className="fas fa-share-alt mr-0.5"></i> Shared
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </button>
                                         ))
                                 ) : (
@@ -1911,13 +2344,15 @@ export default function App() {
                                             }}
                                             className="w-full p-3 rounded-xl border border-slate-100 hover:border-amber-500 hover:bg-amber-50 transition-all flex items-center gap-3 group text-left"
                                         >
-                                            <div className="w-8 h-8 rounded-full bg-amber-100 text-amber-500 flex items-center justify-center text-sm">
-                                                <i className={`fas ${badge.icon}`}></i>
-                                            </div>
-                                            <div>
+                                            <div className="flex-1">
                                                 <h4 className="font-bold text-sm text-slate-700 group-hover:text-amber-700">{badge.name}</h4>
                                                 <p className="text-[10px] text-slate-400 line-clamp-1">{badge.description}</p>
                                             </div>
+                                            {(badge as any).shared && (
+                                                <div className="text-[8px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-100 uppercase tracking-tighter self-start" title="Compartilhada por outro professor">
+                                                    <i className="fas fa-share-alt mr-0.5"></i> Shared
+                                                </div>
+                                            )}
                                         </button>
                                     ))
                                 )}
@@ -2067,8 +2502,25 @@ export default function App() {
                                             const maxP = cat === 'Daily' ? 100 : cat === 'Weekly' ? 200 : cat === 'Side Quest' ? 50 : cat === 'Boss' ? 250 : 100;
                                             setFormData({ ...formData, points: Math.min(maxP, Math.max(minP, val)) });
                                         }}
-                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500"
                                     />
+                                </div>
+                                <div className="flex items-center justify-between p-3 bg-emerald-50 rounded-xl border border-emerald-100">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                                            <i className="fas fa-share-alt text-xs"></i>
+                                        </div>
+                                        <div>
+                                            <p className="text-[10px] font-bold text-emerald-800 uppercase leading-none mb-1">Disponível para Colaboradores</p>
+                                            <p className="text-[9px] text-emerald-600 leading-tight">Outros professores com acesso às suas turmas poderão usar esta missão.</p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFormData({ ...formData, shared: !formData.shared })}
+                                        className={`w-12 h-6 rounded-full transition-colors relative flex-shrink-0 ${formData.shared ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                                    >
+                                        <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${formData.shared ? 'translate-x-7' : 'translate-x-1'}`}></div>
+                                    </button>
                                 </div>
                             </div>
                         )}
@@ -2087,7 +2539,25 @@ export default function App() {
                                     }}
                                     className="w-full bg-red-50 border border-red-300 rounded-xl p-3 outline-none focus:border-red-500 text-red-700 font-bold"
                                 />
-                                <p className="text-[10px] text-slate-400 mt-1">Insira o valor negativo. Ex: -10</p>
+                                <p className="text-[10px] text-slate-400 mt-1 mb-4">Insira o valor negativo. Ex: -10</p>
+                                <div className="flex items-center justify-between p-3 bg-emerald-50 rounded-xl border border-emerald-100">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                                            <i className="fas fa-share-alt text-xs"></i>
+                                        </div>
+                                        <div>
+                                            <p className="text-[10px] font-bold text-emerald-800 uppercase leading-none mb-1">Disponível para Colaboradores</p>
+                                            <p className="text-[9px] text-emerald-600 leading-tight">Permite que colegas usem esta penalidade nas turmas que você compartilha.</p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFormData({ ...formData, shared: !formData.shared })}
+                                        className={`w-12 h-6 rounded-full transition-colors relative flex-shrink-0 ${formData.shared ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                                    >
+                                        <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${formData.shared ? 'translate-x-7' : 'translate-x-1'}`}></div>
+                                    </button>
+                                </div>
                             </div>
                         )}
 
@@ -2143,6 +2613,25 @@ export default function App() {
                                     value={formData.imageUrl}
                                     onChange={(e: any) => setFormData({ ...formData, imageUrl: e.target.value })}
                                 />
+
+                                <div className="mt-4 flex items-center justify-between p-3 bg-emerald-50 rounded-xl border border-emerald-100">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                                            <i className="fas fa-share-alt text-xs"></i>
+                                        </div>
+                                        <div>
+                                            <p className="text-[10px] font-bold text-emerald-800 uppercase leading-none mb-1">Disponível para Colaboradores</p>
+                                            <p className="text-[9px] text-emerald-600 leading-tight">Dê acesso a esta medalha para outros professores nos seus projetos integrados.</p>
+                                        </div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFormData({ ...formData, shared: !formData.shared })}
+                                        className={`w-12 h-6 rounded-full transition-colors relative flex-shrink-0 ${formData.shared ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                                    >
+                                        <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform ${formData.shared ? 'translate-x-7' : 'translate-x-1'}`}></div>
+                                    </button>
+                                </div>
 
                                 {/* Auto Unlock Criteria UI */}
                                 <div className="mt-6 p-4 bg-indigo-50/50 rounded-xl border border-indigo-100">
@@ -2706,6 +3195,19 @@ export default function App() {
                     </div>
                 )
             }
+
+            <ConfirmationModal
+                isOpen={confirmConfig.isOpen}
+                onClose={() => setConfirmConfig({ ...confirmConfig, isOpen: false })}
+                onConfirm={() => {
+                    confirmConfig.onConfirm();
+                    setConfirmConfig({ ...confirmConfig, isOpen: false });
+                }}
+                title={confirmConfig.title}
+                message={confirmConfig.message}
+                confirmLabel={confirmConfig.confirmLabel}
+                variant={confirmConfig.variant}
+            />
 
         </div >
     );

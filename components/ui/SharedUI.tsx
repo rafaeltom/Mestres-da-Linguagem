@@ -40,21 +40,40 @@ export const GenericModal = ({ title, onClose, onSave, children, saveLabel = "Sa
     </div>
 );
 
-export const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message }: any) => {
+export const ConfirmationModal = ({
+    isOpen,
+    onClose,
+    onConfirm,
+    title,
+    message,
+    confirmLabel = "Confirmar",
+    cancelLabel = "Cancelar",
+    variant = "danger"
+}: any) => {
     if (!isOpen) return null;
+
+    const variantStyles: any = {
+        danger: { icon: "fa-exclamation-triangle", bg: "bg-red-100", text: "text-red-500", btn: "danger" },
+        warning: { icon: "fa-info-circle", bg: "bg-amber-100", text: "text-amber-500", btn: "warning" },
+        primary: { icon: "fa-question-circle", bg: "bg-indigo-100", text: "text-indigo-500", btn: "primary" },
+        success: { icon: "fa-check-circle", bg: "bg-emerald-100", text: "text-emerald-500", btn: "success" }
+    };
+
+    const style = variantStyles[variant] || variantStyles.primary;
+
     return (
         <GenericModal
             title={title}
             onClose={onClose}
             onSave={onConfirm}
-            saveLabel="Sim, Excluir"
-            saveVariant="danger"
+            saveLabel={confirmLabel}
+            saveVariant={style.btn}
         >
             <div className="text-center py-4">
-                <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-500 text-2xl">
-                    <i className="fas fa-exclamation-triangle"></i>
+                <div className={`w-20 h-20 ${style.bg} rounded-full flex items-center justify-center mx-auto mb-6 ${style.text} text-3xl shadow-inner`}>
+                    <i className={`fas ${style.icon}`}></i>
                 </div>
-                <p className="text-slate-600 text-sm font-medium">{message}</p>
+                <p className="text-slate-600 text-sm md:text-base font-medium px-4 leading-relaxed">{message}</p>
             </div>
         </GenericModal>
     );

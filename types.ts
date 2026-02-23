@@ -34,6 +34,9 @@ export interface Student {
   markedColor?: string;
   markedLabel?: string;
   registrationId?: string;
+  ownerId?: string;
+  ownerName?: string;
+  shared?: boolean;
 }
 
 export interface ClassGroup {
@@ -43,21 +46,32 @@ export interface ClassGroup {
   seed?: string; // Código único de compartilhamento
   sharedWith?: string[]; // UIDs de outros professores que têm acesso
   students?: Student[];
+  // Flag de memória (nunca gravada no Firestore) — indica turma de outro professor
+  shared?: boolean;
+  // UID do professor dono
+  ownerId?: string;
 }
 
 export interface School {
   id: string;
   name: string;
-  iconUrl?: string; // Novo: URL do ícone customizado da escola
+  iconUrl?: string;
   bimesterDates?: {
-    [key in Bimester]?: { start: string; end: string } // Formato YYYY-MM-DD
+    [key in Bimester]?: { start: string; end: string }
   };
   classes?: ClassGroup[];
+  // Flag de memória (nunca gravada no Firestore) — indica escola de outro professor
+  shared?: boolean;
+  // UID do professor dono (preenchido apenas para escolas compartilhadas)
+  ownerId?: string;
+  // Nome do professor dono (para exibição)
+  ownerName?: string;
 }
 
 export interface Transaction {
   id: string;
   studentId: string;
+  classId?: string; // ID da turma — obrigatório para transações de colaboradores
   type: 'TASK' | 'BONUS' | 'PENALTY' | 'BADGE';
   amount: number;
   description: string;
@@ -66,7 +80,10 @@ export interface Transaction {
   studentName?: string;
   hash?: string;
   customDescription?: string;
-  teacherName?: string; // Nome a ser exibido do professor
+  teacherName?: string;
+  ownerId?: string;
+  ownerName?: string;
+  shared?: boolean;
 }
 
 // Novo: Definição de Tarefa Padrão (O "Cardápio")
@@ -75,8 +92,11 @@ export interface PenaltyDefinition {
   id: string;
   title: string;
   description: string;
-  defaultPoints: number; // Valor negativo
+  defaultPoints: number;
   bimesters: Bimester[];
+  shared?: boolean; // Se true, colaboradores das turmas do dono podem usar esta penalidade
+  ownerId?: string; // UID do professor dono
+  ownerName?: string; // Nome do professor dono
 }
 
 export type TaskCategory = 'Daily' | 'Weekly' | 'Side Quest' | 'Boss' | 'Custom';
@@ -86,20 +106,26 @@ export interface TaskDefinition {
   title: string;
   description: string;
   defaultPoints: number;
-  bimesters: Bimester[]; // Quais bimestres essa tarefa está disponível
+  bimesters: Bimester[];
   category?: TaskCategory;
+  shared?: boolean; // Se true, colaboradores das turmas do dono podem usar esta tarefa
+  ownerId?: string; // UID do professor dono
+  ownerName?: string; // Nome do professor dono
 }
 
 export interface Badge {
   id: string;
   name: string;
-  icon: string; // Classe do FontAwesome (ex: fa-star)
-  imageUrl?: string; // URL de imagem externa (opcional)
+  icon: string;
+  imageUrl?: string;
   description: string;
-  rewardValue?: number; // Novo: Recompensa opcional em LXC ao ganhar a medalha
-  bimesters: Bimester[]; // Quais bimestres essa medalha está disponível
-  cost?: number; // Se custar algo para comprar (futuro)
-  autoUnlockCriteria?: { type: 'LXC' | 'TASKS'; threshold: number }; // Requisito automático
+  rewardValue?: number;
+  bimesters: Bimester[];
+  cost?: number;
+  autoUnlockCriteria?: { type: 'LXC' | 'TASKS'; threshold: number };
+  shared?: boolean; // Se true, colaboradores das turmas do dono podem usar esta medalha
+  ownerId?: string; // UID do professor dono
+  ownerName?: string; // Nome do professor dono
 }
 
 export interface SchoolStats {
@@ -116,3 +142,12 @@ export interface Task {
   assignedClassIds: string[];
   createdAt: Date;
 }
+
+// Configuration for task categories
+export const CATEGORY_CONFIG: Record<string, { label: string; icon: string; color: string; default: number; min: number; max: number }> = {
+  'Daily': { label: 'Missão Diária', icon: 'fa-sun', color: 'text-sky-500', default: 20, min: 10, max: 100 },
+  'Weekly': { label: 'Missão Semanal', icon: 'fa-calendar-week', color: 'text-purple-500', default: 50, min: 20, max: 200 },
+  'Side Quest': { label: 'Side Quest', icon: 'fa-map-signs', color: 'text-emerald-500', default: 10, min: 5, max: 50 },
+  'Boss': { label: 'Missão Principal', icon: 'fa-dragon', color: 'text-rose-500', default: 100, min: 50, max: 250 },
+  'Custom': { label: '— Tarefa Rápida —', icon: 'fa-cogs', color: 'text-slate-500', default: 10, min: 5, max: 100 },
+};
