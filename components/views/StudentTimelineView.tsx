@@ -330,12 +330,14 @@ export const StudentTimelineView: React.FC<StudentTimelineViewProps> = ({
                                         </span>
                                     </div>
                                 )}
-                                <div className="space-y-2 border-b border-slate-100 pb-4">
-                                    <span className="text-xs font-bold text-slate-500 uppercase">Motivo Principal</span>
-                                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-slate-700 font-medium">
-                                        {tx.description}
+                                {tx.type !== 'BADGE' && (
+                                    <div className="space-y-2 border-b border-slate-100 pb-4">
+                                        <span className="text-xs font-bold text-slate-500 uppercase">Motivo Principal</span>
+                                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-slate-700 font-medium">
+                                            {tx.description}
+                                        </div>
                                     </div>
-                                </div>
+                                )}
                                 {tx.customDescription && (
                                     <div className="space-y-2">
                                         <span className="text-xs font-bold text-slate-500 uppercase">Anotações do Professor</span>
