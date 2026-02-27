@@ -183,11 +183,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                         className={`p-3 rounded-xl flex items-center justify-between cursor-pointer border-2 transition-all group ${isSelected ? 'bg-indigo-50 border-indigo-500 shadow-sm' : 'bg-white border-slate-100 hover:border-indigo-200'}`}
                                     >
                                         <div className="flex items-center gap-3 overflow-hidden">
-                                            <div className={`w-10 h-10 rounded-full ${level.color} flex items-center justify-center text-white font-bold text-sm shadow-sm flex-shrink-0 relative`}>
-                                                {student.name.charAt(0)}
+                                            <div className={`w-9 h-9 rounded-full ${level.color} flex items-center justify-center text-white font-bold text-xs shadow-sm flex-shrink-0 relative overflow-hidden`}>
+                                                {student.avatarId && student.avatarId !== 'default' ? (
+                                                    <img src={`/assets/avatars/${student.avatarId}.png`} alt="Avatar" className="w-full h-full object-cover" />
+                                                ) : (
+                                                    <span>{student.name.charAt(0)}</span>
+                                                )}
                                                 {student.marked && (
                                                     <div
-                                                        className="absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-white"
+                                                        className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full border-2 border-white z-10"
                                                         style={{ backgroundColor: student.markedColor || '#22c55e' }}
                                                     ></div>
                                                 )}

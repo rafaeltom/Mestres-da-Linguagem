@@ -8,6 +8,16 @@ export interface LevelRule {
   color: string;
 }
 
+
+export type LicenseKeyType = 'master' | 'test';
+
+export interface LicenseEntry {
+  keyId: string;
+  type: LicenseKeyType;
+  claimedAt: string; // ISO string
+  expiresAt?: string; // ISO string — Test keys only
+}
+
 export interface TeacherProfileData {
   name: string;
   email?: string; // E-mail do professor (imutável após registro)
@@ -16,6 +26,17 @@ export interface TeacherProfileData {
   bio: string;
   passwordHash: string; // Armazena apenas o Hash
   pin?: string; // PIN de 4 dígitos numéricos para desbloqueio
+  role?: 'admin' | 'teacher';
+  isUnlocked?: boolean;
+  /** @deprecated Use licenseKeys array for new logic */
+  licenseKey?: string;
+  licenseKeys?: LicenseEntry[]; // Stacked licenses
+  masterKeysCount?: number; // 0-3
+  testKeysCount?: number;  // 0-5
+  /** How many total schools the user has soft-deleted via Test key slot (max 5) */
+  testSchoolDeletions?: number;
+  /** How many total schools the user has soft-deleted via Master key slots (max masterKeysCount * SCHOOLS_PER_MASTER * 7) */
+  masterSchoolDeletions?: number;
 }
 
 export interface Student {
@@ -24,7 +45,7 @@ export interface Student {
   nickname?: string; // Novo: Apelido escolhido pelo aluno
   classId: string;
   schoolId: string;
-  avatarId: string;
+  avatarId?: string;
   lxcTotal: { [key in Bimester]: number };
   badges: string[]; // IDs das medalhas
   walletAddress?: string;
@@ -34,9 +55,15 @@ export interface Student {
   markedColor?: string;
   markedLabel?: string;
   registrationId?: string;
+  currency?: number; // Moeda da lojinha (Flores)
+  ownedAvatars?: string[]; // IDs dos avatares desbloqueados
+  freeAvatarChoices?: number; // Quantidade de trocas gratuitas disponíveis
   ownerId?: string;
   ownerName?: string;
   shared?: boolean;
+  // Soft Delete
+  isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface ClassGroup {
@@ -50,6 +77,9 @@ export interface ClassGroup {
   shared?: boolean;
   // UID do professor dono
   ownerId?: string;
+  // Soft Delete
+  isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface School {
@@ -66,6 +96,9 @@ export interface School {
   ownerId?: string;
   // Nome do professor dono (para exibição)
   ownerName?: string;
+  // Soft Delete
+  isDeleted?: boolean;
+  deletedAt?: string;
 }
 
 export interface Transaction {
@@ -84,6 +117,7 @@ export interface Transaction {
   ownerId?: string;
   ownerName?: string;
   shared?: boolean;
+  currencyAmount?: number; // Flores ganhas nesta transação
 }
 
 // Novo: Definição de Tarefa Padrão (O "Cardápio")
@@ -97,6 +131,8 @@ export interface PenaltyDefinition {
   shared?: boolean; // Se true, colaboradores das turmas do dono podem usar esta penalidade
   ownerId?: string; // UID do professor dono
   ownerName?: string; // Nome do professor dono
+  assignedSchoolIds?: string[]; // IDs das escolas vinculadas
+  assignedClassIds?: string[];  // IDs das turmas vinculadas
 }
 
 export type TaskCategory = 'Daily' | 'Weekly' | 'Side Quest' | 'Boss' | 'Custom';
@@ -111,6 +147,8 @@ export interface TaskDefinition {
   shared?: boolean; // Se true, colaboradores das turmas do dono podem usar esta tarefa
   ownerId?: string; // UID do professor dono
   ownerName?: string; // Nome do professor dono
+  assignedSchoolIds?: string[]; // IDs das escolas vinculadas
+  assignedClassIds?: string[];  // IDs das turmas vinculadas
 }
 
 export interface Badge {
@@ -126,6 +164,8 @@ export interface Badge {
   shared?: boolean; // Se true, colaboradores das turmas do dono podem usar esta medalha
   ownerId?: string; // UID do professor dono
   ownerName?: string; // Nome do professor dono
+  assignedSchoolIds?: string[]; // IDs das escolas vinculadas
+  assignedClassIds?: string[];  // IDs das turmas vinculadas
 }
 
 export interface SchoolStats {
@@ -145,9 +185,9 @@ export interface Task {
 
 // Configuration for task categories
 export const CATEGORY_CONFIG: Record<string, { label: string; icon: string; color: string; default: number; min: number; max: number }> = {
-  'Daily': { label: 'Missão Diária', icon: 'fa-sun', color: 'text-sky-500', default: 20, min: 10, max: 100 },
-  'Weekly': { label: 'Missão Semanal', icon: 'fa-calendar-week', color: 'text-purple-500', default: 50, min: 20, max: 200 },
-  'Side Quest': { label: 'Side Quest', icon: 'fa-map-signs', color: 'text-emerald-500', default: 10, min: 5, max: 50 },
-  'Boss': { label: 'Missão Principal', icon: 'fa-dragon', color: 'text-rose-500', default: 100, min: 50, max: 250 },
-  'Custom': { label: '— Tarefa Rápida —', icon: 'fa-cogs', color: 'text-slate-500', default: 10, min: 5, max: 100 },
+  'Daily': { label: 'Missão Diária', icon: 'fa-sun', color: 'text-sky-500', default: 20, min: 0, max: 100 },
+  'Weekly': { label: 'Missão Semanal', icon: 'fa-calendar-week', color: 'text-purple-500', default: 50, min: 0, max: 200 },
+  'Side Quest': { label: 'Side Quest', icon: 'fa-map-signs', color: 'text-emerald-500', default: 10, min: 0, max: 50 },
+  'Boss': { label: 'Missão Principal', icon: 'fa-dragon', color: 'text-rose-500', default: 100, min: 0, max: 250 },
+  'Custom': { label: '— Tarefa Rápida —', icon: 'fa-cogs', color: 'text-slate-500', default: 10, min: 0, max: 100 },
 };

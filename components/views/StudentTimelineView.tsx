@@ -2,6 +2,7 @@ import React from 'react';
 import { Bimester, Student } from '../../types';
 import { AppData } from '../../services/localStorageService';
 import { GenericModal } from '../ui/SharedUI';
+import { StoreView } from './StoreView';
 
 export interface StudentTimelineViewProps {
     student: Student;
@@ -24,6 +25,7 @@ export interface StudentTimelineViewProps {
     saveTransactionEdit: (txId: string) => void;
     handleEditTransactionAmount: (txId: string, currentAmount: number) => void;
     handleDeleteTransaction: (txId: string) => void;
+    updateStudentAvatar: (updatedStudent: Student) => void; // Reused as updateStudentData
 }
 
 export const StudentTimelineView: React.FC<StudentTimelineViewProps> = ({
@@ -31,15 +33,31 @@ export const StudentTimelineView: React.FC<StudentTimelineViewProps> = ({
     viewingTransactionId, setViewingTransactionId,
     editingTxDescId, setEditingTxDescId, editingTxDescValue, setEditingTxDescValue, saveTxDescEdit,
     editingTransactionId, setEditingTransactionId, editingTransactionValue, setEditingTransactionValue,
-    saveTransactionEdit, handleEditTransactionAmount, handleDeleteTransaction
+    saveTransactionEdit, handleEditTransactionAmount, handleDeleteTransaction, updateStudentAvatar
 }) => {
+    const [isStoreOpen, setIsStoreOpen] = React.useState(false);
+
     const total = student.lxcTotal[currentBimester] || 0;
     const level = getLevel(total, currentBimester);
-    const myBadges = data.badgesCatalog.filter(b => student.badges?.includes(b.id));
 
     const studentTransactions = data.transactions
         .filter(t => t.studentId === student.id && t.bimester === currentBimester)
         .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+
+    // Derived badges: combined from student.badges array and BADGE type transactions for robustness
+    const badgeIdsFromTransactions = studentTransactions
+        .filter(t => t.type === 'BADGE')
+        .map(t => t.description); // We store ID (or name in legacy) in description
+
+    const combinedBadgeIdentifiers = Array.from(new Set([
+        ...(student.badges || []),
+        ...badgeIdsFromTransactions
+    ]));
+
+    const myBadges = data.badgesCatalog.filter(b =>
+        combinedBadgeIdentifiers.includes(b.id) ||
+        combinedBadgeIdentifiers.includes(b.name)
+    );
 
     let runningBalance = 0;
     let currentLevelTitle = getLevel(0, currentBimester).title;
@@ -57,7 +75,7 @@ export const StudentTimelineView: React.FC<StudentTimelineViewProps> = ({
     }).reverse();
 
     return (
-        <div className="min-h-screen bg-slate-100 font-sans pb-10">
+        <div className="min-h-screen bg-slate-100 font-sans pb-10" >
             <div className={`${level.color} text-white p-8 rounded-b-[3rem] shadow-xl relative`}>
                 <button onClick={() => setView('dashboard')} className="absolute top-4 left-4 bg-white/20 px-3 py-1 rounded-full text-xs font-bold hover:bg-white/30 transition-all z-10"><i className="fas fa-arrow-left"></i> Voltar</button>
                 {student.registrationId && (
@@ -66,14 +84,21 @@ export const StudentTimelineView: React.FC<StudentTimelineViewProps> = ({
                     </div>
                 )}
                 <div className="flex flex-col items-center mt-4">
-                    <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center text-5xl text-slate-700 font-bold mb-4 shadow-lg border-4 border-white/30 relative">
-                        {student.name.charAt(0)}
+                    <div className="relative mb-4">
+                        <div
+                            className="w-24 h-24 bg-white rounded-full flex items-center justify-center overflow-hidden text-5xl text-slate-700 font-bold shadow-lg border-4 border-white/30"
+                        >
+                            {student.avatarId && student.avatarId !== 'default' ? (
+                                <img src={`/assets/avatars/${student.avatarId}.png`} alt="Avatar" className="w-full h-full object-cover" />
+                            ) : student.name.charAt(0)}
+                        </div>
                         <button
-                            onClick={() => {
+                            onClick={(e) => {
+                                e.stopPropagation();
                                 const newNick = prompt("Escolha seu Nickname:", student.nickname || "");
                                 if (newNick !== null) updateStudentNickname(student.id, newNick);
                             }}
-                            className="absolute bottom-0 right-0 w-8 h-8 bg-indigo-500 hover:bg-indigo-600 rounded-full flex items-center justify-center text-white text-xs shadow-md border-2 border-white"
+                            className="absolute -bottom-1 -right-1 w-9 h-9 bg-indigo-500 hover:bg-indigo-600 rounded-full flex items-center justify-center text-white text-xs shadow-md border-2 border-white transition-transform hover:scale-110 z-20"
                             title="Editar Nickname"
                         >
                             <i className="fas fa-pen"></i>
@@ -91,7 +116,24 @@ export const StudentTimelineView: React.FC<StudentTimelineViewProps> = ({
                         </span>
                     </div>
 
-                    <div className="mt-6 text-6xl font-black gamified-font drop-shadow-md">{total} <span className="text-lg opacity-70 font-bold">LXC</span></div>
+                    <div className="mt-6 flex items-center justify-center relative w-full">
+                        <div className="text-6xl font-black gamified-font drop-shadow-md">{total} <span className="text-lg opacity-70 font-bold">LXC</span></div>
+
+                        {total >= 242 && (
+                            <div className="absolute right-0 top-1/2 -translate-y-1/2 flex flex-col items-center group z-10 scale-100 md:scale-110">
+                                <button
+                                    onClick={() => setIsStoreOpen(true)}
+                                    className="w-44 h-44 md:w-52 md:h-52 transition-all hover:scale-110 active:scale-95 drop-shadow-2xl flex items-center justify-center"
+                                    title="Entrar na Lojinha — Jardim das Flores de Lácio"
+                                >
+                                    <img src="/lojinha.png" alt="Lojinha" className="w-full h-full object-contain" />
+                                </button>
+                                <div className="bg-amber-400 text-slate-900 px-4 py-1.5 rounded-full text-[12px] font-black tracking-widest flex items-center gap-1.5 shadow-xl -mt-4 border-4 border-slate-900">
+                                    <span className="text-sm leading-none">❀</span> {student.currency || 0} FLORES
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
 
@@ -99,7 +141,9 @@ export const StudentTimelineView: React.FC<StudentTimelineViewProps> = ({
                 <div className="bg-white p-6 rounded-3xl shadow-lg border-2 border-amber-100">
                     <div className="flex justify-between items-center mb-4">
                         <h3 className="text-slate-700 font-bold text-sm uppercase flex items-center gap-2"><i className="fas fa-medal text-amber-500 text-lg"></i> Hall de Medalhas</h3>
-                        <span className="bg-amber-100 text-amber-700 text-xs font-bold px-2 py-1 rounded-full">{myBadges.length}</span>
+                        <div className="flex items-center gap-2">
+                            <span className="bg-slate-100 text-slate-500 text-[10px] font-bold px-2 py-1 rounded-full">{myBadges.length} Medalhas</span>
+                        </div>
                     </div>
 
                     {myBadges.length === 0 ? <p className="text-slate-400 text-sm italic text-center py-4">Sua coleção de medalhas está vazia. Continue se esforçando!</p> : (
@@ -156,7 +200,7 @@ export const StudentTimelineView: React.FC<StudentTimelineViewProps> = ({
                                             {tx.type === 'BADGE' ? (
                                                 <span className="flex items-center gap-2 text-amber-600">
                                                     <i className="fas fa-medal"></i>
-                                                    {data.badgesCatalog.find(b => b.id === tx.description)?.name || 'Nova Medalha'}
+                                                    {data.badgesCatalog.find(b => b.id === tx.description || b.name === tx.description)?.name || 'Nova Medalha'}
                                                 </span>
                                             ) : tx.description}
                                         </p>
@@ -305,6 +349,17 @@ export const StudentTimelineView: React.FC<StudentTimelineViewProps> = ({
                     })()}
                 </GenericModal>
             )}
+
+            {
+                isStoreOpen && (
+                    <StoreView
+                        student={student}
+                        currentLxc={total}
+                        onClose={() => setIsStoreOpen(false)}
+                        onUpdateStudent={updateStudentAvatar}
+                    />
+                )
+            }
         </div>
     );
 };

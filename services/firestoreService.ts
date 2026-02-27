@@ -39,6 +39,7 @@ const COLL_TRANSACTIONS = 'transactions';
 const COLL_CATALOG_TASKS = 'catalog_tasks';
 const COLL_CATALOG_BADGES = 'catalog_badges';
 const COLL_CATALOG_PENALTIES = 'catalog_penalties';
+const COLL_LICENSE_KEYS = 'license_keys';
 
 // --- USER / PROFILE ---
 
@@ -48,7 +49,119 @@ export const saveTeacherProfile = async (uid: string, profile: TeacherProfileDat
 
 export const getTeacherProfile = async (uid: string): Promise<TeacherProfileData | null> => {
   const snap = await getDoc(doc(db, COLL_USERS, uid));
-  return snap.exists() ? snap.data() as TeacherProfileData : null;
+  if (snap.exists()) {
+    return snap.data() as TeacherProfileData;
+  }
+  return null;
+};
+
+// --- LICENSE KEYS & ADMIN ---
+
+const ADMIN_EMAILS = ['rafaelalmeida293@gmail.com', 'rafaeltomluz@gmail.com'];
+
+export const isAdminEmail = (email: string) => ADMIN_EMAILS.includes(email.toLowerCase());
+
+export const generateLicenseKey = () => {
+  const chars = 'ABCDEFGHIJKLMNPQRSTUVWXYZ0123456789';
+  const getChunk = () => Array.from({ length: 4 }, () => chars.charAt(Math.floor(Math.random() * chars.length))).join('');
+  return `${getChunk()}-${getChunk()}-${getChunk()}`;
+};
+
+export const generateLicenseBatch = async (uid: string, count: number = 500, keyType: 'master' | 'test' = 'master') => {
+  const profile = await getTeacherProfile(uid);
+  const isAdmin = profile?.role === 'admin' || (profile?.email && isAdminEmail(profile.email));
+  if (!isAdmin) throw new Error("Acesso negado: Apenas administradores podem gerar chaves.");
+
+  const batch = writeBatch(db);
+  const prefix = keyType === 'test' ? 'TST' : 'MST';
+
+  for (let i = 0; i < count; i++) {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Avoid O, 0, I, 1
+    let key = `${prefix}-`;
+    for (let j = 0; j < 12; j++) {
+      if (j > 0 && j % 4 === 0) key += '-';
+      key += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+
+    const ref = doc(db, COLL_LICENSE_KEYS, key);
+    batch.set(ref, {
+      id: key,
+      type: keyType,
+      used: false,
+      usedBy: null,
+      usedAt: null,
+      createdAt: new Date().toISOString(),
+      createdBy: uid
+    });
+  }
+  await batch.commit();
+};
+
+export const claimLicenseKey = async (uid: string, key: string) => {
+  const keyRef = doc(db, COLL_LICENSE_KEYS, key.trim().toUpperCase());
+  let claimedKeyType: 'master' | 'test' = 'master';
+  let expiresAtStr: string | undefined;
+
+  await runTransaction(db, async (transaction) => {
+    const keySnap = await transaction.get(keyRef);
+    if (!keySnap.exists()) throw new Error("Chave de licença inválida.");
+
+    const keyData = keySnap.data();
+    if (keyData.used) throw new Error("Esta chave já foi utilizada.");
+
+    claimedKeyType = keyData.type ?? (key.startsWith('TST-') ? 'test' : 'master');
+
+    const userRef = doc(db, COLL_USERS, uid);
+    const userSnap = await transaction.get(userRef);
+    if (!userSnap.exists()) throw new Error("Usuário não encontrado.");
+
+    const profileData = userSnap.data() as TeacherProfileData;
+    const masterKeysCount = profileData.masterKeysCount ?? 0;
+    const testKeysCount = profileData.testKeysCount ?? 0;
+
+    // Enforce limits
+    if (claimedKeyType === 'master' && masterKeysCount >= 3) {
+      throw new Error(`Limite de 3 chaves-mestre atingido. Não é possível adicionar mais.`);
+    }
+    if (claimedKeyType === 'test' && testKeysCount >= 5) {
+      throw new Error(`Limite de 5 chaves de teste atingido. Insira uma chave-mestre.`);
+    }
+
+    const claimedAt = new Date().toISOString();
+    if (claimedKeyType === 'test') {
+      const endOfYear = new Date(new Date().getFullYear(), 11, 31, 23, 59, 59);
+      expiresAtStr = endOfYear.toISOString();
+    }
+
+    // Fallback import
+    const newEntry = { keyId: key, type: claimedKeyType, claimedAt, ...(expiresAtStr ? { expiresAt: expiresAtStr } : {}) };
+    const currentKeys = profileData.licenseKeys ?? [];
+
+    transaction.update(keyRef, {
+      used: true,
+      usedBy: uid,
+      usedAt: claimedAt
+    });
+
+    transaction.update(userRef, {
+      isUnlocked: true,
+      licenseKey: key, // legacy
+      licenseKeys: [...currentKeys, newEntry],
+      masterKeysCount: claimedKeyType === 'master' ? masterKeysCount + 1 : masterKeysCount,
+      testKeysCount: claimedKeyType === 'test' ? testKeysCount + 1 : testKeysCount,
+    });
+  });
+
+  return { keyType: claimedKeyType, expiresAt: expiresAtStr };
+};
+
+export const getAllLicenseKeys = async (uid: string) => {
+  const profile = await getTeacherProfile(uid);
+  const isAdmin = profile?.role === 'admin' || (profile?.email && isAdminEmail(profile.email));
+  if (!isAdmin) throw new Error("Acesso negado.");
+
+  const snap = await getDocs(collection(db, COLL_LICENSE_KEYS));
+  return snap.docs.map(d => d.data());
 };
 
 // --- DATA LOADING (FULL FETCH) ---
@@ -199,11 +312,23 @@ export const firestoreGiveRewardAtomic = async (uid: string, tx: Transaction) =>
     const sData = sDoc.data() as Student;
     const currentTotal = sData.lxcTotal[tx.bimester] || 0;
     const newTotal = currentTotal + tx.amount;
+    const currentCurrency = sData.currency || 0;
+    const newCurrency = currentCurrency + (tx.currencyAmount || 0);
 
     // 2. Update Student
-    transaction.update(sRef, {
-      [`lxcTotal.${tx.bimester}`]: newTotal
-    });
+    const updates: any = {
+      [`lxcTotal.${tx.bimester}`]: newTotal,
+      currency: newCurrency
+    };
+
+    if (tx.type === 'BADGE') {
+      const currentBadges = sData.badges || [];
+      if (!currentBadges.includes(tx.description)) {
+        updates.badges = [...currentBadges, tx.description];
+      }
+    }
+
+    transaction.update(sRef, updates);
 
     // 3. Create Transaction
     const txRef = doc(db, COLL_TRANSACTIONS, tx.id);
@@ -226,7 +351,8 @@ export const firestoreDeleteTransaction = async (txId: string) => {
       const currentTotal = sData.lxcTotal[txData.bimester] || 0;
 
       const updates: any = {
-        [`lxcTotal.${txData.bimester}`]: currentTotal - txData.amount
+        [`lxcTotal.${txData.bimester}`]: currentTotal - txData.amount,
+        currency: (sData.currency || 0) - (txData.currencyAmount || 0)
       };
 
       if (txData.type === 'BADGE' && sData.badges) {

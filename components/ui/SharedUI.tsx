@@ -48,7 +48,8 @@ export const ConfirmationModal = ({
     message,
     confirmLabel = "Confirmar",
     cancelLabel = "Cancelar",
-    variant = "danger"
+    variant = "danger",
+    extraContent
 }: any) => {
     if (!isOpen) return null;
 
@@ -74,6 +75,7 @@ export const ConfirmationModal = ({
                     <i className={`fas ${style.icon}`}></i>
                 </div>
                 <p className="text-slate-600 text-sm md:text-base font-medium px-4 leading-relaxed">{message}</p>
+                {extraContent && <div className="text-left mt-2 px-2">{extraContent}</div>}
             </div>
         </GenericModal>
     );

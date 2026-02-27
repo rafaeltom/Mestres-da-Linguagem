@@ -77,5 +77,26 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow write: if isAuthenticated() && isOwner();
     }
+
+    // ─── License Keys ────────────────────────────────────────────────────────
+    match /license_keys/{id} {
+      // Normal users can read specific keys to claim them
+      // Admins (verified by email and provider) can read/write everything
+      allow read: if isAuthenticated() && (
+        (request.auth.token.email in ['rafaelalmeida293@gmail.com', 'rafaeltomluz@gmail.com'] && 
+         request.auth.token.firebase.sign_in_provider == 'google.com') ||
+        (request.method == 'get') // normal users can 'get' a single key to check validity
+      );
+      allow write: if isAuthenticated() && (
+        (request.auth.token.email in ['rafaelalmeida293@gmail.com', 'rafaeltomluz@gmail.com'] && 
+         request.auth.token.firebase.sign_in_provider == 'google.com') ||
+        (request.method == 'update' && 
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
+         resource.data.used == false && 
+         request.resource.data.used == true &&
+         request.resource.data.usedBy == request.auth.uid)
+      );
+    }
   }
 }
+

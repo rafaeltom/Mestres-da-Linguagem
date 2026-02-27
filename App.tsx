@@ -49,8 +49,12 @@ import {
     firestoreFetchMySharedClasses,
     firestoreGetSchool,
     firestoreFetchTransactionsByClasses,
-    firestoreMigrateLegacyTransactions
+    firestoreMigrateLegacyTransactions,
+    claimLicenseKey,
+    generateLicenseBatch,
+    getAllLicenseKeys
 } from './services/firestoreService';
+import { computeTeacherLimits, computeSchoolDeletionPolicy } from './services/licenseService';
 import { auth } from './services/firebase';
 
 
@@ -269,22 +273,24 @@ const LoginScreen = ({ onLogin }: { onLogin: (e: string, p: string) => Promise<b
                     {isRegistering && (
                         <>
                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Nome do Professor</label>
-                                <input type="text" className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors" value={name} onChange={e => setName(e.target.value)} disabled={loading} required />
+                                <label htmlFor="reg-name" className="block text-xs font-bold text-slate-500 uppercase mb-1">Nome do Professor</label>
+                                <input id="reg-name" name="name" type="text" className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors" value={name} onChange={e => setName(e.target.value)} disabled={loading} required autoComplete="name" />
                             </div>
                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Escola Primária</label>
-                                <input type="text" className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors" value={school} onChange={e => setSchool(e.target.value)} disabled={loading} required />
+                                <label htmlFor="reg-school" className="block text-xs font-bold text-slate-500 uppercase mb-1">Escola principal</label>
+                                <input id="reg-school" name="school" type="text" className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors" value={school} onChange={e => setSchool(e.target.value)} disabled={loading} required />
                             </div>
                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Disciplina</label>
-                                <input type="text" className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors" value={subject} onChange={e => setSubject(e.target.value)} disabled={loading} required />
+                                <label htmlFor="reg-subject" className="block text-xs font-bold text-slate-500 uppercase mb-1">Disciplina</label>
+                                <input id="reg-subject" name="subject" type="text" className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors" value={subject} onChange={e => setSubject(e.target.value)} disabled={loading} required />
                             </div>
                         </>
                     )}
                     <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Email</label>
+                        <label htmlFor="auth-email" className="block text-xs font-bold text-slate-500 uppercase mb-1">E-mail</label>
                         <input
+                            id="auth-email"
+                            name="email"
                             type="email"
                             className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors"
                             value={email}
@@ -292,11 +298,14 @@ const LoginScreen = ({ onLogin }: { onLogin: (e: string, p: string) => Promise<b
                             placeholder="usuario@email.com"
                             disabled={loading}
                             required
+                            autoComplete="email"
                         />
                     </div>
                     <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Senha</label>
+                        <label htmlFor="auth-pass" className="block text-xs font-bold text-slate-500 uppercase mb-1">Senha</label>
                         <input
+                            id="auth-pass"
+                            name="password"
                             type="password"
                             className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors"
                             value={pass}
@@ -304,12 +313,15 @@ const LoginScreen = ({ onLogin }: { onLogin: (e: string, p: string) => Promise<b
                             placeholder="••••••••"
                             disabled={loading}
                             required
+                            autoComplete={isRegistering ? "new-password" : "current-password"}
                         />
                     </div>
                     {isRegistering && (
                         <div>
-                            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Confirmar Senha</label>
+                            <label htmlFor="auth-pass-confirm" className="block text-xs font-bold text-slate-500 uppercase mb-1">Confirmar Senha</label>
                             <input
+                                id="auth-pass-confirm"
+                                name="confirm_password"
                                 type="password"
                                 className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors"
                                 value={passConfirm}
@@ -317,6 +329,7 @@ const LoginScreen = ({ onLogin }: { onLogin: (e: string, p: string) => Promise<b
                                 placeholder="••••••••"
                                 disabled={loading}
                                 required
+                                autoComplete="new-password"
                             />
                         </div>
                     )}
@@ -426,12 +439,21 @@ export default function App() {
         initialData?: any;
     }>({ isOpen: false, type: null, mode: 'create' });
 
+    // Initialize mission selector filters when opened
+    useEffect(() => {
+        if (modalConfig.isOpen && (modalConfig.type as string) === 'mission-selector') {
+            setMissionSelectorBimester(currentBimester);
+            setMissionSelectorSchoolId(selectedSchoolId);
+        }
+    }, [modalConfig.isOpen, modalConfig.type, currentBimester, selectedSchoolId]);
+
     const [deleteConfig, setDeleteConfig] = useState<{
         isOpen: boolean;
         type: 'school' | 'class' | 'task' | 'badge' | 'penalty' | 'student' | null;
         id: string | null;
         parentId?: string;
         itemName?: string;
+        warningMessage?: string; // Optional warning shown in the confirm dialog for schools
     }>({ isOpen: false, type: null, id: null });
 
     // Lista de IDs de turmas compartilhadas (para checagem rápida)
@@ -458,7 +480,7 @@ export default function App() {
     const [formData, setFormData] = useState({
         name: '',
         description: '',
-        points: 10,
+        points: 0,
         icon: 'fa-medal',
         imageUrl: '',
         rewardValue: 0,
@@ -466,7 +488,12 @@ export default function App() {
         autoUnlockEnabled: false,
         autoUnlockType: 'LXC' as 'LXC' | 'TASKS',
         autoUnlockThreshold: 0,
-        shared: false // Opt-in de compartilhamento para catálogo
+        schoolIconUrl: '',
+        bimesterDates: { 1: { start: '', end: '' }, 2: { start: '', end: '' }, 3: { start: '', end: '' }, 4: { start: '', end: '' } } as Record<Bimester, { start: string; end: string }>,
+        category: 'Custom',
+        shared: false,
+        assignedSchoolIds: [] as string[],
+        assignedClassIds: [] as string[]
     });
 
     const [showBatchImport, setShowBatchImport] = useState(false);
@@ -479,6 +506,8 @@ export default function App() {
     const [customMissionDesc, setCustomMissionDesc] = useState('');
     const [manualPoints, setManualPoints] = useState(0);
     const [isGivingBadge, setIsGivingBadge] = useState(false);
+    const [missionSelectorBimester, setMissionSelectorBimester] = useState<number | 'all'>(1);
+    const [missionSelectorSchoolId, setMissionSelectorSchoolId] = useState<string>('');
 
     const [studentSettingsConfig, setStudentSettingsConfig] = useState<{
         isOpen: boolean;
@@ -512,12 +541,52 @@ export default function App() {
         });
     };
 
+    const handleClaimLicenseKey = async (key: string) => {
+        if (!currentUser) return;
+        try {
+            const result = await claimLicenseKey(currentUser.uid, key);
+            const typeLabel = result?.keyType === 'master' ? 'Mestre' : 'Teste';
+            const expMsg = result?.expiresAt ? ` Válida até ${new Date(result.expiresAt).toLocaleDateString('pt-BR')}.` : '';
+            showToast(`Chave ${typeLabel} ativada com sucesso!${expMsg}`, "success");
+            // Refresh profile so license counts are reflected immediately
+            const cloudProfile = await getTeacherProfile(currentUser.uid);
+            if (cloudProfile) {
+                setProfile(prev => ({ ...prev, ...cloudProfile }));
+                saveProfile({ ...profile, ...cloudProfile });
+            }
+        } catch (err: any) {
+            showToast(err.message || "Erro ao ativar licença.", "error");
+        }
+    };
+
+    const handleGenerateLicenseKey = async (keyType: import('./types').LicenseKeyType = 'master') => {
+        if (!currentUser) return;
+        try {
+            await generateLicenseBatch(currentUser.uid, 50, keyType);
+            showToast(`Lote de 50 chaves do tipo ${keyType} gerado com sucesso!`, "success");
+        } catch (err: any) {
+            showToast(err.message, "error");
+        }
+    };
+
+
+    const handleGetLicenseKeys = async () => {
+        if (!currentUser) return [];
+        try {
+            return await getAllLicenseKeys(currentUser.uid);
+        } catch (err: any) {
+            showToast(err.message, "error");
+            return [];
+        }
+    };
+
     // Estado para Penalidades
     const [catalogTab, setCatalogTab] = useState<'tasks' | 'badges' | 'penalties' | 'levels'>('tasks');
     const [applyPenaltyConfig, setApplyPenaltyConfig] = useState<{ isOpen: boolean; penaltyId: string | null; amount: number }>({ isOpen: false, penaltyId: null, amount: 0 });
     const [penaltyStudents, setPenaltyStudents] = useState<string[]>([]);
     const [penaltyClassId, setPenaltyClassId] = useState<string>('');
     const [penaltySchoolId, setPenaltySchoolId] = useState<string>('');
+    const [penaltyStudentSearch, setPenaltyStudentSearch] = useState('');
 
     // Estado para edição de transação individual
     const [editingTransactionId, setEditingTransactionId] = useState<string | null>(null);
@@ -538,6 +607,27 @@ export default function App() {
     const [isSyncing, setIsSyncing] = useState(false);
     const [syncMessage, setSyncMessage] = useState('');
 
+    const clearAllAppState = () => {
+        setData({ schools: [], transactions: [], taskCatalog: [], badgesCatalog: [], penaltiesCatalog: [] });
+        setProfile({
+            name: "Professor(a)",
+            subject: "Linguagens",
+            bio: "Educador focado em gamificação.",
+            passwordHash: "U3dmMTIzc3dm"
+        });
+        setSelectedSchoolId('');
+        setSelectedClassId('');
+        setViewingStudentId('');
+        setIsSchoolTabUnlocked(false);
+        setIsAuthenticated(false);
+        setAuthLoading(false);
+        setView('dashboard');
+        // Limpar LocalStorage para evitar contaminação entre trocas de conta sem F5
+        localStorage.removeItem('mestres_linguagem_v2');
+        localStorage.removeItem('mestres_teacher_profile');
+        localStorage.removeItem('mestres_auth_token');
+    };
+
     // --- EFEITOS (AUTH LISTENER) ---
     useEffect(() => {
         const unsubscribe = subscribeToAuthChanges(async (user) => {
@@ -556,32 +646,58 @@ export default function App() {
                         setData(cloudData);
                         saveData(cloudData);
                         showToast("Dados carregados da nuvem.", "success");
-                    } else if (data.schools.length > 0) {
-                        console.log("[Auth] Cloud is empty but local has data. Syncing up...");
-                        showToast("Sincronizando dados locais com sua nova conta...", "info");
+                    } else if (data.schools.length > 0 && profile.email === user.email) {
+                        // Só sincroniza local -> nuvem se o e-mail bater, evitando leak de sessões passadas
+                        console.log("[Auth] Cloud is empty but local has matching data. Syncing up...");
+                        showToast("Sincronizando dados locais...", "info");
                         await firestoreSyncAll(user.uid, data, profile);
                         showToast("Dados salvos na nuvem!", "success");
-                    } else {
-                        console.log("[Auth] Both cloud and local are empty. Fresh start.");
-                        setData(cloudData);
                     }
 
                     // Profile
                     let cloudProfile = await getTeacherProfile(user.uid);
+
+                    // Admin Enforcement Logic
+                    const isAdminContent = ['rafaelalmeida293@gmail.com', 'rafaeltomluz@gmail.com'].includes((user.email || '').toLowerCase());
+                    const isGoogleAuth = user.providerData.some((p: any) => p.providerId === 'google.com');
+                    const shouldBeAdmin = isAdminContent && isGoogleAuth;
+                    const shouldBeTeacher = isAdminContent && !isGoogleAuth;
+
                     if (cloudProfile) {
                         if (!cloudProfile.email && user.email) {
                             cloudProfile = { ...cloudProfile, email: user.email };
                         }
+
+                        // Enforce Admin Role dynamically
+                        if (shouldBeAdmin && cloudProfile.role !== 'admin') {
+                            cloudProfile = { ...cloudProfile, role: 'admin', isUnlocked: true };
+                            await saveTeacherProfile(user.uid, cloudProfile);
+                            console.log("[Auth] Upgraded to admin via Google Auth.");
+                        } else if (shouldBeTeacher && cloudProfile.role === 'admin') {
+                            cloudProfile = { ...cloudProfile, role: 'teacher' };
+                            await saveTeacherProfile(user.uid, cloudProfile);
+                            console.log("[Auth] Demoted to teacher due to Password Auth.");
+                        }
+
                         setProfile(cloudProfile);
                         saveProfile(cloudProfile);
                     } else {
-                        const newProfile = { ...profile, email: user.email || '' };
-                        setProfile(newProfile);
-                        saveProfile(newProfile);
-                        await saveTeacherProfile(user.uid, newProfile);
+                        // NOVO USUÁRIO: Inicialização limpa e segura
+                        const defaultProfile: TeacherProfileData = {
+                            name: user.displayName || "Professor(a)",
+                            email: user.email || '',
+                            subject: "Linguagens",
+                            bio: "Educador focado em gamificação.",
+                            passwordHash: "U3dmMTIzc3dm", // Hash padrão
+                            isUnlocked: shouldBeAdmin,
+                            role: shouldBeAdmin ? 'admin' : 'teacher'
+                        };
+                        setProfile(defaultProfile);
+                        saveProfile(defaultProfile);
+                        await saveTeacherProfile(user.uid, defaultProfile);
                     }
 
-                    // --- SYNC UNIFICADO (PROJETO INTEGRADO + PROPRIO) ---
+                    // Sync turmas compartilhadas
                     await syncAllRelevantData(user.uid, cloudData);
 
                 } catch (err) {
@@ -589,9 +705,7 @@ export default function App() {
                     showToast("Erro ao carregar dados da nuvem.", "error");
                 }
             } else {
-                setIsAuthenticated(false);
-                setCurrentUser(null);
-                localStorage.removeItem('mestres_auth_token');
+                clearAllAppState();
             }
             setAuthLoading(false);
         });
@@ -978,7 +1092,7 @@ export default function App() {
 
     const performLogout = () => {
         logout();
-        setIsAuthenticated(false);
+        clearAllAppState();
         localStorage.removeItem('mestres_auth_token');
     };
 
@@ -997,6 +1111,24 @@ export default function App() {
         });
         setData(newData);
         saveData(newData);
+    };
+    const handleUpdateStudent = async (updatedStudent: Student) => {
+        const newData = JSON.parse(JSON.stringify(data));
+        newData.schools.forEach((s: School) => {
+            s.classes?.forEach((c: ClassGroup) => {
+                if (c.students) {
+                    c.students = c.students.map((std: Student) =>
+                        std.id === updatedStudent.id ? updatedStudent : std
+                    );
+                }
+            });
+        });
+        setData(newData);
+        saveData(newData);
+
+        if (auth.currentUser?.uid) {
+            await firestoreUpdateStudent(updatedStudent);
+        }
     };
 
     // --- HELPER: GERENCIAR TRANSAÇÕES (EDITAR/EXCLUIR) ---
@@ -1079,7 +1211,9 @@ export default function App() {
                     4: { start: '', end: '' }
                 },
                 category: dataItem.category || 'Custom',
-                shared: dataItem.shared || false
+                shared: dataItem.shared || false,
+                assignedSchoolIds: dataItem.assignedSchoolIds || [],
+                assignedClassIds: dataItem.assignedClassIds || []
             });
         } else {
             // Reset form
@@ -1102,7 +1236,9 @@ export default function App() {
                     4: { start: '', end: '' }
                 },
                 category: 'Custom',
-                shared: false
+                shared: false,
+                assignedSchoolIds: [],
+                assignedClassIds: []
             });
         }
     };
@@ -1205,16 +1341,19 @@ export default function App() {
         const newData = JSON.parse(JSON.stringify(data));
         const uid = auth.currentUser?.uid;
 
+        let iconUrl = formData.schoolIconUrl;
         if (type === 'school') {
-            let iconUrl = formData.schoolIconUrl;
-
-            // Lógica automática para logos
-            if (!iconUrl) {
-                if (name.includes("EE Nossa Senhora Aparecida")) iconUrl = "nsalogo.png";
-                else if (name.includes("EMEF Professor Alípio Corrêa Neto") || name.includes("EMEF Alípio Corrêa Neto")) iconUrl = "alipiologo.png";
-            }
+            if (name.includes("EE Nossa Senhora Aparecida")) iconUrl = "nsalogo.png";
+            else if (name.includes("EMEF Professor Alípio Corrêa Neto") || name.includes("EMEF Alípio Corrêa Neto")) iconUrl = "alipiologo.png";
 
             if (mode === 'create') {
+                const limits = computeTeacherLimits(profile);
+                if (!limits.isAdmin && data.schools.filter(s => !s.isDeleted && !s.shared).length >= limits.maxSchools) {
+                    if (limits.maxSchools === 0) {
+                        return showToast("Sem licença ativa. Adicione uma chave-mestre ou de teste para criar escolas.", "error");
+                    }
+                    return showToast(`Limite de ${limits.maxSchools} escola(s) atingido. Adicione uma chave-mestre para criar mais.`, "error");
+                }
                 const newSchool: School = {
                     id: uuidv4(),
                     name,
@@ -1240,6 +1379,17 @@ export default function App() {
             const school = newData.schools.find((s: School) => s.id === targetSchoolId);
             if (school) {
                 if (mode === 'create') {
+                    const limits = computeTeacherLimits(profile);
+                    // Count only own (non-shared, non-deleted) classes
+                    const ownClassCount = data.schools
+                        .filter(s => !s.shared && !s.isDeleted)
+                        .reduce((acc, s) => acc + (s.classes?.filter(c => !c.isDeleted).length || 0), 0);
+                    if (!limits.isAdmin && ownClassCount >= limits.maxClasses) {
+                        if (limits.maxClasses === 0) {
+                            return showToast("Sem licença ativa. Adicione uma chave para criar turmas.", "error");
+                        }
+                        return showToast(`Limite de ${limits.maxClasses} turma(s) atingido. Adicione mais chaves para expandir.`, "error");
+                    }
                     const newClass: ClassGroup = { id: uuidv4(), name, schoolId: targetSchoolId, students: [], seed: generateClassSeed() };
                     if (!school.classes) school.classes = [];
                     school.classes.push(newClass);
@@ -1257,6 +1407,10 @@ export default function App() {
         else if (type === 'task') {
             const clampedPoints = Math.max(5, Math.min(250, Number(formData.points)));
             if (mode === 'create') {
+                const limits = computeTeacherLimits(profile);
+                if (!limits.isAdmin && isFinite(limits.maxTasks) && newData.taskCatalog.length >= limits.maxTasks) {
+                    return showToast(`Limite de ${limits.maxTasks} atividades para contas sem chave-mestre.`, "error");
+                }
                 const newItem: TaskDefinition = {
                     id: uuidv4(),
                     title: name,
@@ -1266,7 +1420,9 @@ export default function App() {
                     category: category as any,
                     shared: formData.shared,
                     ownerId: uid,
-                    ownerName: profile?.displayName || profile?.name || "Professor"
+                    ownerName: profile?.displayName || profile?.name || "Professor",
+                    assignedSchoolIds: formData.assignedSchoolIds,
+                    assignedClassIds: formData.assignedClassIds
                 };
                 newData.taskCatalog.push(newItem);
                 if (uid) firestoreAddCatalogItem(uid, 'task', newItem);
@@ -1279,6 +1435,8 @@ export default function App() {
                     task.bimesters = bimesters;
                     task.category = category as any;
                     task.shared = formData.shared;
+                    task.assignedSchoolIds = formData.assignedSchoolIds;
+                    task.assignedClassIds = formData.assignedClassIds;
                     // Preserve owner metadata if it exists, otherwise set it
                     if (!task.ownerId) task.ownerId = uid;
                     if (!task.ownerName) task.ownerName = profile?.displayName || profile?.name || "Professor";
@@ -1290,6 +1448,10 @@ export default function App() {
             const clampedReward = Math.max(0, Math.min(100, Number(rewardValue)));
             const criteria = formData.autoUnlockEnabled ? { type: formData.autoUnlockType, threshold: Number(formData.autoUnlockThreshold) } : undefined;
             if (mode === 'create') {
+                const limits = computeTeacherLimits(profile);
+                if (!limits.isAdmin && isFinite(limits.maxBadges) && newData.badgesCatalog.length >= limits.maxBadges) {
+                    return showToast(`Limite de ${limits.maxBadges} medalhas para contas sem chave-mestre.`, "error");
+                }
                 const newItem: Badge = {
                     id: uuidv4(),
                     name,
@@ -1301,7 +1463,9 @@ export default function App() {
                     autoUnlockCriteria: criteria,
                     shared: formData.shared,
                     ownerId: uid,
-                    ownerName: profile?.displayName || profile?.name || "Professor"
+                    ownerName: profile?.displayName || profile?.name || "Professor",
+                    assignedSchoolIds: formData.assignedSchoolIds,
+                    assignedClassIds: formData.assignedClassIds
                 };
                 newData.badgesCatalog.push(newItem);
                 if (uid) firestoreAddCatalogItem(uid, 'badge', newItem);
@@ -1316,6 +1480,8 @@ export default function App() {
                     badge.bimesters = bimesters;
                     badge.autoUnlockCriteria = criteria;
                     badge.shared = formData.shared;
+                    badge.assignedSchoolIds = formData.assignedSchoolIds;
+                    badge.assignedClassIds = formData.assignedClassIds;
                     if (!badge.ownerId) badge.ownerId = uid;
                     if (!badge.ownerName) badge.ownerName = profile?.displayName || profile?.name || "Professor";
                     if (uid) firestoreUpdateCatalogItem('badge', badge);
@@ -1325,6 +1491,10 @@ export default function App() {
         else if (type === 'penalty') {
             const clampedPoints = Math.max(-30, Math.min(-1, -Math.abs(Number(formData.points))));
             if (mode === 'create') {
+                const limits = computeTeacherLimits(profile);
+                if (!limits.isAdmin && isFinite(limits.maxPenalties) && newData.penaltiesCatalog.length >= limits.maxPenalties) {
+                    return showToast(`Limite de ${limits.maxPenalties} penalidades para contas sem chave-mestre.`, "error");
+                }
                 const newItem: PenaltyDefinition = {
                     id: uuidv4(),
                     title: name,
@@ -1333,7 +1503,9 @@ export default function App() {
                     bimesters: bimesters,
                     shared: formData.shared,
                     ownerId: uid,
-                    ownerName: profile?.displayName || profile?.name || "Professor"
+                    ownerName: profile?.displayName || profile?.name || "Professor",
+                    assignedSchoolIds: formData.assignedSchoolIds,
+                    assignedClassIds: formData.assignedClassIds
                 };
                 newData.penaltiesCatalog.push(newItem);
                 if (uid) firestoreAddCatalogItem(uid, 'penalty', newItem);
@@ -1345,6 +1517,8 @@ export default function App() {
                     pen.defaultPoints = clampedPoints;
                     pen.bimesters = bimesters;
                     pen.shared = formData.shared;
+                    pen.assignedSchoolIds = formData.assignedSchoolIds;
+                    pen.assignedClassIds = formData.assignedClassIds;
                     if (!pen.ownerId) pen.ownerId = uid;
                     if (!pen.ownerName) pen.ownerName = profile?.displayName || profile?.name || "Professor";
                     if (uid) firestoreUpdateCatalogItem('penalty', pen);
@@ -1361,6 +1535,28 @@ export default function App() {
 
     const requestDelete = (e: React.MouseEvent, type: 'school' | 'class' | 'task' | 'badge' | 'penalty' | 'student', id: string, parentId?: string, itemName?: string) => {
         e.stopPropagation();
+
+        if (type === 'school') {
+            // Count own non-deleted schools (excluding shared schools belonging to other teachers)
+            const ownNonDeletedCount = data.schools.filter(s => !s.isDeleted && !s.shared).length;
+            const policy = computeSchoolDeletionPolicy(profile, ownNonDeletedCount);
+
+            if (!policy.allowed) {
+                // Hard block — show toast and do NOT open confirm dialog
+                showToast(policy.message, 'error');
+                return;
+            }
+
+            // Allowed — open confirm dialog, injecting warning into message if needed
+            const baseMsg = `Tem certeza que deseja excluir a escola "${itemName || 'esta escola'}"? Esta ação pode ser revertida pelo administrador.`;
+            const fullMsg = policy.showWarning
+                ? `${baseMsg}\n\n${policy.message}`
+                : baseMsg;
+
+            setDeleteConfig({ isOpen: true, type, id, parentId, itemName, warningMessage: policy.showWarning ? policy.message : undefined });
+            return;
+        }
+
         setDeleteConfig({ isOpen: true, type, id, parentId, itemName });
     };
 
@@ -1368,31 +1564,57 @@ export default function App() {
         const { type, id, parentId } = deleteConfig;
         const newData = JSON.parse(JSON.stringify(data));
         const uid = auth.currentUser?.uid;
+        const now = new Date().toISOString();
 
         if (type === 'school') {
-            newData.schools = newData.schools.filter((s: School) => s.id !== id);
+            // SOFT DELETE: Mark as deleted, keep in Firestore for backup
+            const school = newData.schools.find((s: School) => s.id === id);
+            if (school) {
+                school.isDeleted = true;
+                school.deletedAt = now;
+            }
             if (selectedSchoolId === id) { setSelectedSchoolId(''); setSelectedClassId(''); }
-            if (uid && id) firestoreDeleteSchool(id);
+            if (uid && id) firestoreUpdateSchool({ ...newData.schools.find((s: School) => s.id === id) }).catch(console.error);
+
+            // Increment deletion counter on profile
+            const isMasterUser = (profile.masterKeysCount ?? 0) > 0;
+            const updatedProfile: typeof profile = isMasterUser
+                ? { ...profile, masterSchoolDeletions: (profile.masterSchoolDeletions ?? 0) + 1 }
+                : { ...profile, testSchoolDeletions: (profile.testSchoolDeletions ?? 0) + 1 };
+            setProfile(updatedProfile);
+            saveProfile(updatedProfile);
+            if (uid) saveTeacherProfile(uid, updatedProfile).catch(console.error);
         }
         else if (type === 'class') {
+            // SOFT DELETE: Mark class as deleted
             const school = newData.schools.find((s: School) => s.id === parentId);
-            if (school && school.classes) school.classes = school.classes.filter((c: ClassGroup) => c.id !== id);
+            const cls = school?.classes?.find((c: ClassGroup) => c.id === id);
+            if (cls) {
+                cls.isDeleted = true;
+                cls.deletedAt = now;
+            }
             if (selectedClassId === id) setSelectedClassId('');
-            if (uid && id) firestoreDeleteClass(id);
+            if (uid && id) firestoreUpdateClass(cls).catch(console.error);
         }
         else if (type === 'student') {
+            // SOFT DELETE: Mark student as deleted
+            let deletedStudent: Student | null = null;
             newData.schools.forEach((s: School) => {
                 s.classes?.forEach((c: ClassGroup) => {
-                    if (c.students) {
-                        c.students = c.students.filter((st: Student) => st.id !== id);
+                    const st = c.students?.find((st: Student) => st.id === id);
+                    if (st) {
+                        st.isDeleted = true;
+                        st.deletedAt = now;
+                        deletedStudent = st;
                     }
                 });
             });
-            if (uid && id) firestoreDeleteStudent(id);
+            if (uid && deletedStudent) firestoreUpdateStudent(deletedStudent).catch(console.error);
             if (studentSettingsConfig.isOpen && studentSettingsConfig.studentId === id) setStudentSettingsConfig({ ...studentSettingsConfig, isOpen: false });
             if (view === 'student-view' && viewingStudentId === id) setView('dashboard');
         }
         else if (type === 'task') {
+            // PHYSICAL DELETE: Catalog items can be fully removed
             newData.taskCatalog = newData.taskCatalog.filter((t: TaskDefinition) => t.id !== id);
             if (uid && id) firestoreDeleteCatalogItem('task', id);
         }
@@ -1502,40 +1724,92 @@ export default function App() {
         const uid = auth.currentUser?.uid;
         const txPromises: Promise<void>[] = [];
 
+        // --- CONSTANTES DE GAMEFICAÇÃO (FLORES E LIMITES) ---
+        const BIMESTER_LXC_LIMITS: Record<number, number> = { 1: 1000, 2: 1200, 3: 1200, 4: 1200 };
+        const FLOWER_PER_ACTIVITY_CAP = 100;
+        const threshold400 = 400;
+        const currentLimit = BIMESTER_LXC_LIMITS[currentBimester] || 1200;
+
         if (isGivingBadge) {
             if (!selectedTaskId) {
                 showToast("Selecione uma medalha no catálogo.", "info");
                 return;
             }
-            const badge = data.badgesCatalog.find(b => b.id === selectedTaskId);
+            const badge = currentData.badgesCatalog.find((b: any) => b.id === selectedTaskId);
             if (!badge) return;
 
             selectedStudentsForTask.forEach(sid => {
                 const school = currentData.schools.find((s: School) => s.classes?.some((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid)));
                 const cls = school?.classes?.find((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid));
+                const student = cls?.students?.find((st: Student) => st.id === sid);
+                if (!student) return;
+
+                const points = badge.rewardValue || 0;
+                let gainedLXC = 0;
+                let gainedFlores = 0;
+                const currentTotalLXC = student.lxcTotal[currentBimester] || 0;
+
+                // --- LÓGICA DE CÁLCULO ---
+                if (currentTotalLXC >= currentLimit) {
+                    // Já atingiu o teto: converte tudo em flores 1:1 (cap 100)
+                    gainedLXC = 0;
+                    gainedFlores = Math.min(FLOWER_PER_ACTIVITY_CAP, points);
+                } else {
+                    // Ainda não atingiu o teto
+                    gainedLXC = points;
+                    if (currentTotalLXC + points > currentLimit) {
+                        gainedLXC = currentLimit - currentTotalLXC;
+                        const overflow = (currentTotalLXC + points) - currentLimit;
+                        gainedFlores += Math.min(FLOWER_PER_ACTIVITY_CAP, overflow);
+                    }
+                    // Regra do 4:1 após 400 LXC
+                    const lxcStart = currentTotalLXC;
+                    const lxcEnd = currentTotalLXC + gainedLXC;
+                    if (lxcEnd > threshold400) {
+                        const portionAbove400 = lxcEnd - Math.max(threshold400, lxcStart);
+                        gainedFlores += Math.floor(portionAbove400 / 4);
+                    }
+                }
 
                 const tx: Transaction = {
                     id: uuidv4(),
                     studentId: sid,
                     classId: cls?.id,
                     type: 'BADGE',
-                    amount: badge.rewardValue || 0,
-                    description: manualDesc || badge.name, // Use edited name or original
+                    amount: gainedLXC,
+                    description: badge.id,
                     customDescription: customMissionDesc || badge.description,
                     bimester: currentBimester,
                     date: new Date(),
-                    teacherName: profile.displayName || profile.name
+                    teacherName: profile.displayName || profile.name,
+                    currencyAmount: gainedFlores
                 };
 
                 currentData.transactions.push(tx);
-                if (badge.rewardValue) {
-                    const school = currentData.schools.find((s: School) => s.classes?.some((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid)));
-                    const cls = school?.classes?.find((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid));
-                    const student = cls?.students?.find((st: Student) => st.id === sid);
-                    if (student) {
-                        student.lxcTotal[currentBimester] = (student.lxcTotal[currentBimester] || 0) + badge.rewardValue;
+                const oldTotalForTasks = student.lxcTotal[currentBimester] || 0;
+                student.lxcTotal[currentBimester] = oldTotalForTasks + gainedLXC;
+                student.currency = (student.currency || 0) + gainedFlores;
+
+                // --- MARCOS DE AVATAR (TROCAS GRÁTIS) ---
+                const taskAvatarMilestones = [500, 700, 900];
+                taskAvatarMilestones.forEach(m => {
+                    if (oldTotalForTasks < m && (student.lxcTotal[currentBimester] || 0) >= m) {
+                        student.freeAvatarChoices = (student.freeAvatarChoices || 0) + 1;
                     }
+                });
+
+                student.badges = student.badges || [];
+                if (!student.badges.includes(badge.id)) {
+                    student.badges.push(badge.id);
                 }
+
+                // --- MARCOS DE AVATAR (TROCAS GRÁTIS) ---
+                const avatarMilestones = [500, 700, 900];
+                avatarMilestones.forEach(m => {
+                    if (currentTotalLXC < m && (student.lxcTotal[currentBimester] || 0) >= m) {
+                        student.freeAvatarChoices = (student.freeAvatarChoices || 0) + 1;
+                    }
+                });
 
                 if (uid) txPromises.push(firestoreGiveRewardAtomic(uid, tx));
             });
@@ -1546,7 +1820,6 @@ export default function App() {
                 let desc = manualDesc;
                 const finalCustomDesc = customMissionDesc;
 
-                // Final check on type
                 let type: 'TASK' | 'PENALTY' | 'BONUS' = points < 0 ? 'PENALTY' : 'TASK';
                 if (!desc || !desc.trim()) {
                     showToast("Você precisa informar um Título / Motivo para a missão.", "error");
@@ -1555,66 +1828,127 @@ export default function App() {
 
                 const school = currentData.schools.find((s: School) => s.classes?.some((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid)));
                 const cls = school?.classes?.find((c: ClassGroup) => c.students?.some((st: Student) => st.id === sid));
+                const student = cls?.students?.find((st: Student) => st.id === sid);
+                if (!student) continue;
+
+                let gainedLXC = 0;
+                let gainedFlores = 0;
+                const currentTotalLXC = student.lxcTotal[currentBimester] || 0;
+
+                if (type === 'PENALTY') {
+                    // Penalidades apenas subtraem LXC
+                    gainedLXC = points;
+                    gainedFlores = 0;
+                } else {
+                    // Recompensas: usam a nova lógica de flores
+                    if (currentTotalLXC >= currentLimit) {
+                        gainedLXC = 0;
+                        gainedFlores = Math.min(FLOWER_PER_ACTIVITY_CAP, points);
+                    } else {
+                        gainedLXC = points;
+                        if (currentTotalLXC + points > currentLimit) {
+                            gainedLXC = currentLimit - currentTotalLXC;
+                            const overflow = (currentTotalLXC + points) - currentLimit;
+                            gainedFlores += Math.min(FLOWER_PER_ACTIVITY_CAP, overflow);
+                        }
+                        const lxcStart = currentTotalLXC;
+                        const lxcEnd = currentTotalLXC + gainedLXC;
+                        if (lxcEnd > threshold400) {
+                            const portionAbove400 = lxcEnd - Math.max(threshold400, lxcStart);
+                            gainedFlores += Math.floor(portionAbove400 / 4);
+                        }
+                    }
+                }
 
                 const tx: Transaction = {
                     id: uuidv4(),
                     studentId: sid,
                     classId: cls?.id,
                     type,
-                    amount: points,
+                    amount: gainedLXC,
                     description: desc,
                     customDescription: finalCustomDesc,
                     bimester: currentBimester,
                     date: new Date(),
-                    teacherName: profile.displayName || profile.name
+                    teacherName: profile.displayName || profile.name,
+                    currencyAmount: gainedFlores
                 };
 
                 currentData.transactions.push(tx);
-                const student = cls?.students?.find((st: Student) => st.id === sid);
-                if (student) {
-                    student.lxcTotal[currentBimester] = (student.lxcTotal[currentBimester] || 0) + points;
+                const oldTotalLXCBeforeUpdate = student.lxcTotal[currentBimester] || 0;
+                student.lxcTotal[currentBimester] = oldTotalLXCBeforeUpdate + gainedLXC;
+                student.currency = (student.currency || 0) + gainedFlores;
 
-                    // NEW LOGIC: check and award automatic badges
-                    student.badges = student.badges || [];
-                    const autoBadges = currentData.badgesCatalog.filter((b: Badge) =>
-                        b.autoUnlockCriteria &&
-                        b.bimesters?.includes(currentBimester) &&
-                        !student.badges.includes(b.id)
-                    );
+                // --- MARCOS DE AVATAR (TROCAS GRÁTIS) ---
+                const taskMilestones = [500, 700, 900];
+                taskMilestones.forEach(m => {
+                    if (oldTotalLXCBeforeUpdate < m && (student.lxcTotal[currentBimester] || 0) >= m) {
+                        student.freeAvatarChoices = (student.freeAvatarChoices || 0) + 1;
+                    }
+                });
 
-                    autoBadges.forEach((badge: Badge) => {
-                        const crit = badge.autoUnlockCriteria!;
-                        let unlock = false;
-                        if (crit.type === 'LXC') {
-                            if ((student.lxcTotal[currentBimester] || 0) >= crit.threshold) unlock = true;
-                        } else if (crit.type === 'TASKS') {
-                            const taskCount = currentData.transactions.filter((t: Transaction) => t.studentId === student.id && t.type === 'TASK' && t.bimester === currentBimester).length;
-                            if (taskCount >= crit.threshold) unlock = true;
-                        }
+                // --- MEDALHAS AUTOMÁTICAS ---
+                student.badges = student.badges || [];
+                const autoBadges = currentData.badgesCatalog.filter((b: Badge) =>
+                    b.autoUnlockCriteria &&
+                    b.bimesters?.includes(currentBimester) &&
+                    !student.badges.includes(b.id)
+                );
 
-                        if (unlock) {
-                            student.badges.push(badge.id);
+                autoBadges.forEach((badge: Badge) => {
+                    const crit = badge.autoUnlockCriteria!;
+                    let unlock = false;
+                    if (crit.type === 'LXC') {
+                        if ((student.lxcTotal[currentBimester] || 0) >= crit.threshold) unlock = true;
+                    } else if (crit.type === 'TASKS') {
+                        const taskCount = currentData.transactions.filter((t: Transaction) => t.studentId === student.id && (t.type === 'TASK' || t.type === 'BONUS') && t.bimester === currentBimester).length;
+                        if (taskCount >= crit.threshold) unlock = true;
+                    }
 
-                            const autoTx: Transaction = {
-                                id: uuidv4(),
-                                studentId: student.id,
-                                classId: cls?.id,
-                                type: 'BADGE',
-                                amount: badge.rewardValue || 0,
-                                description: badge.name,
-                                customDescription: "Desbloqueio Automático",
-                                bimester: currentBimester,
-                                date: new Date(),
-                                teacherName: 'Sistema'
-                            };
-                            currentData.transactions.push(autoTx);
-                            if (badge.rewardValue) {
-                                student.lxcTotal[currentBimester] = (student.lxcTotal[currentBimester] || 0) + badge.rewardValue;
+                    if (unlock) {
+                        const bPoints = badge.rewardValue || 0;
+                        let bGainedLXC = 0;
+                        let bGainedFlores = 0;
+                        const bCurrentTotal = student.lxcTotal[currentBimester] || 0;
+
+                        if (bCurrentTotal >= currentLimit) {
+                            bGainedLXC = 0;
+                            bGainedFlores = Math.min(FLOWER_PER_ACTIVITY_CAP, bPoints);
+                        } else {
+                            bGainedLXC = bPoints;
+                            if (bCurrentTotal + bPoints > currentLimit) {
+                                bGainedLXC = currentLimit - bCurrentTotal;
+                                const bOverflow = (bCurrentTotal + bPoints) - currentLimit;
+                                bGainedFlores += Math.min(FLOWER_PER_ACTIVITY_CAP, bOverflow);
                             }
-                            if (uid) txPromises.push(firestoreGiveRewardAtomic(uid, autoTx));
+                            const blxcStart = bCurrentTotal;
+                            const blxcEnd = bCurrentTotal + bGainedLXC;
+                            if (blxcEnd > threshold400) {
+                                const bPortion = blxcEnd - Math.max(threshold400, blxcStart);
+                                bGainedFlores += Math.floor(bPortion / 4);
+                            }
                         }
-                    });
-                }
+
+                        student.badges.push(badge.id);
+                        const autoTx: Transaction = {
+                            id: uuidv4(),
+                            studentId: student.id,
+                            classId: cls?.id,
+                            type: 'BADGE',
+                            amount: bGainedLXC,
+                            description: badge.id,
+                            customDescription: "Desbloqueio Automático",
+                            bimester: currentBimester,
+                            date: new Date(),
+                            teacherName: 'Sistema',
+                            currencyAmount: bGainedFlores
+                        };
+                        currentData.transactions.push(autoTx);
+                        student.lxcTotal[currentBimester] += bGainedLXC;
+                        student.currency = (student.currency || 0) + bGainedFlores;
+                        if (uid) txPromises.push(firestoreGiveRewardAtomic(uid, autoTx));
+                    }
+                });
 
                 if (uid) txPromises.push(firestoreGiveRewardAtomic(uid, tx));
             }
@@ -1622,18 +1956,13 @@ export default function App() {
 
         setData(currentData);
         saveData(currentData);
-
-        // Execute Firestore in background (or await if we want to show loading)
-        // For better UX, we just let it sync. If error, we might need a global error handler or toast.
-        // But for now let's log.
         Promise.all(txPromises).catch(err => console.error("Erro ao sincronizar transações:", err));
 
-        // Reset UI
         setSelectedStudentsForTask([]);
         setIndividualScores({});
         setManualDesc('');
         setCustomMissionDesc('');
-        setManualPoints(10);
+        setManualPoints(0);
         setIsGivingBadge(false);
         setSelectedTaskId('');
         showToast("Salvo com sucesso!", "success");
@@ -1807,7 +2136,6 @@ export default function App() {
         const newBio = (form.elements.namedItem('bio') as HTMLInputElement).value;
 
         let newHash = profile.passwordHash;
-
         const isGoogleUser = auth.currentUser?.providerData.some(p => p.providerId === 'google.com');
 
         if (!isGoogleUser) {
@@ -1815,16 +2143,15 @@ export default function App() {
             const newPass = (form.elements.namedItem('newPass') as HTMLInputElement)?.value;
             const confirmPass = (form.elements.namedItem('confirmPass') as HTMLInputElement)?.value;
 
-            if (newPass || currentPass || confirmPass) {
+            if (newPass && newPass.trim() !== "") {
                 if (!currentPass) {
                     return showToast("Digite a Senha Atual para poder alterá-la.", "info");
                 }
 
-                // Verify current password
                 const currentHashInput = obscurePassword(currentPass);
                 const isCurrentPassValid =
                     (currentPass.toLowerCase() === 'swf123swf' && currentHashInput === MASTER_PASS_ENCODED) ||
-                    (profile.passwordHash && profile.passwordHash !== MASTER_PASS_ENCODED && currentHashInput === profile.passwordHash);
+                    (profile.passwordHash && currentHashInput === profile.passwordHash);
 
                 if (!isCurrentPassValid) {
                     return showToast("A Senha Atual informada está incorreta.", "error");
@@ -1847,37 +2174,36 @@ export default function App() {
         const newPin = (form.elements.namedItem('newPin') as HTMLInputElement)?.value;
         const confirmPin = (form.elements.namedItem('confirmPin') as HTMLInputElement)?.value;
 
-        if (newPin || currentPin || confirmPin) {
+        if (newPin && newPin.trim() !== "") {
             if (!currentPin) return showToast("Digite o PIN atual para alterá-lo.", "info");
             if (currentPin !== (profile.pin || '0000')) return showToast("PIN Atual incorreto.", "error");
             if (newPin !== confirmPin) return showToast("O Novo PIN e a confirmação não coincidem.", "error");
-            if (newPin && !/^\d{4}$/.test(newPin)) {
+            if (!/^\d{4}$/.test(newPin)) {
                 return showToast("O Novo PIN deve ter exatamente 4 dígitos numéricos.", "error");
             }
-            if (newPin) finalPin = newPin;
+            finalPin = newPin;
         }
 
         const uid = auth.currentUser?.uid;
 
-        const updatedProfile = {
-            name: newName,
-            displayName: newDisplayName,
-            subject: newSubject,
-            bio: newBio,
-            passwordHash: newHash,
-            pin: finalPin
-        };
-
-        setProfile(updatedProfile);
-        saveProfile(updatedProfile);
-
-        if (uid) {
-            try {
-                await saveTeacherProfile(uid, updatedProfile);
-            } catch (err) {
-                console.error("Erro ao salvar perfil no Firestore:", err);
+        setProfile(prev => {
+            const updated = {
+                ...prev, // Preserve all metadata (email, role, isUnlocked)
+                name: newName,
+                displayName: newDisplayName,
+                subject: newSubject,
+                bio: newBio,
+                passwordHash: newHash,
+                pin: finalPin
+            };
+            saveProfile(updated); // Save to local storage
+            if (uid) {
+                saveTeacherProfile(uid, updated).catch(err => {
+                    console.error("Erro ao salvar perfil no Firestore:", err);
+                });
             }
-        }
+            return updated;
+        });
 
         showToast("Perfil atualizado com sucesso!", "success");
     };
@@ -1923,11 +2249,16 @@ export default function App() {
     // handlePinSubmit removed, now handled by useEffect auto-verify
 
     // --- DERIVED STATE ---
-    const currentSchool = data.schools.find(s => s.id === selectedSchoolId);
-    const currentClass = currentSchool?.classes?.find(c => c.id === selectedClassId);
+    // Filter out soft-deleted structural records
+    const visibleSchools = data.schools.filter(s => !s.isDeleted);
+    const currentSchool = visibleSchools.find(s => s.id === selectedSchoolId);
+    const currentClass = currentSchool?.classes?.filter(c => !c.isDeleted).find(c => c.id === selectedClassId);
+
+    // Compute license limits (used for UI hints and enforcement)
+    const teacherLimits = computeTeacherLimits(profile);
 
     // Sort and Filter logic
-    const studentsListRaw = currentClass?.students || [];
+    const studentsListRaw = (currentClass?.students || []).filter(s => !s.isDeleted);
     const studentsListAlphabetical = [...studentsListRaw].sort((a, b) => a.name.localeCompare(b.name));
     const filteredStudentsList = studentsListAlphabetical.filter(s => s.name.toLowerCase().includes(studentSearch.toLowerCase()) || s.nickname?.toLowerCase().includes(studentSearch.toLowerCase()));
     const studentsList = filteredStudentsList;
@@ -1983,6 +2314,7 @@ export default function App() {
                 saveTransactionEdit={saveTransactionEdit}
                 handleEditTransactionAmount={handleEditTransactionAmount}
                 handleDeleteTransaction={handleDeleteTransaction}
+                updateStudentAvatar={handleUpdateStudent}
             />
         );
     }
@@ -2098,6 +2430,9 @@ export default function App() {
                         handleProfileUpdate={handleProfileUpdate}
                         auth={auth}
                         renderCloudSyncButton={renderCloudSyncButton}
+                        onClaimKey={handleClaimLicenseKey}
+                        onGenerateBatch={handleGenerateLicenseKey}
+                        onGetKeys={handleGetLicenseKeys}
                     />
                 )}
 
@@ -2254,17 +2589,49 @@ export default function App() {
 
                             {/* Tabs removidas a pedido do usuário, apenas missões */}
 
-                            <div className="mb-4 flex-shrink-0">
+                            <div className="mb-4 flex-shrink-0 space-y-3">
                                 <div className="relative">
                                     <i className="fas fa-search absolute left-4 top-3.5 text-slate-400"></i>
                                     <input
                                         type="text"
-                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-3 outline-none focus:border-indigo-500 font-bold text-slate-600"
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-3 outline-none focus:border-indigo-500 font-bold text-slate-600 shadow-sm"
                                         placeholder="Buscar..."
                                         autoFocus
                                         onChange={(e) => setMissionSearch(e.target.value)}
                                         value={missionSearch}
                                     />
+                                </div>
+
+                                <div className="flex flex-col sm:flex-row gap-2">
+                                    <div className="flex-1">
+                                        <div className="flex gap-1 bg-slate-100 p-1 rounded-xl">
+                                            {[1, 2, 3, 4].map(b => (
+                                                <button
+                                                    key={b}
+                                                    onClick={() => setMissionSelectorBimester(b)}
+                                                    className={`flex-1 py-1 rounded-lg text-[10px] font-black transition-all ${missionSelectorBimester === b ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                                                >
+                                                    {b}º Bim
+                                                </button>
+                                            ))}
+                                            <button
+                                                onClick={() => setMissionSelectorBimester('all')}
+                                                className={`px-2 py-1 rounded-lg text-[10px] font-black transition-all ${missionSelectorBimester === 'all' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                                            >
+                                                Tudo
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <select
+                                        value={missionSelectorSchoolId}
+                                        onChange={(e) => setMissionSelectorSchoolId(e.target.value)}
+                                        className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-[10px] font-bold text-slate-600 outline-none focus:border-indigo-400"
+                                    >
+                                        <option value="">Todas as Escolas</option>
+                                        {data.schools.filter(s => !s.isDeleted).map(s => (
+                                            <option key={s.id} value={s.id}>{s.name}</option>
+                                        ))}
+                                    </select>
                                 </div>
                             </div>
 
@@ -2291,7 +2658,22 @@ export default function App() {
 
                                 {!isGivingBadge ? (
                                     data.taskCatalog
-                                        .filter(t => t.bimesters.includes(currentBimester) && t.title.toLowerCase().includes(missionSearch.toLowerCase()))
+                                        .filter(t => {
+                                            const matchesBimester = missionSelectorBimester === 'all' || t.bimesters.includes(missionSelectorBimester as Bimester);
+                                            const matchesSearch = t.title.toLowerCase().includes(missionSearch.toLowerCase());
+
+                                            // Visibility Logic
+                                            const isGlobal = !t.assignedSchoolIds || t.assignedSchoolIds.length === 0;
+                                            const isLinkedToSchool = t.assignedSchoolIds?.includes(selectedSchoolId);
+                                            const isLinkedToClass = !t.assignedClassIds || t.assignedClassIds.length === 0 || t.assignedClassIds.includes(selectedClassId);
+
+                                            // Filter Logic (Modal specific)
+                                            const matchesModalSchool = !missionSelectorSchoolId || t.assignedSchoolIds?.includes(missionSelectorSchoolId);
+
+                                            const isVisible = isGlobal || (isLinkedToSchool && isLinkedToClass);
+
+                                            return matchesBimester && matchesSearch && isVisible && matchesModalSchool;
+                                        })
                                         .map(task => (
                                             <button
                                                 key={task.id}
@@ -2333,28 +2715,45 @@ export default function App() {
                                             </button>
                                         ))
                                 ) : (
-                                    data.badgesCatalog.filter(b => b.bimesters.includes(currentBimester) && b.name.toLowerCase().includes(missionSearch.toLowerCase())).map(badge => (
-                                        <button
-                                            key={badge.id}
-                                            onClick={() => {
-                                                setSelectedTaskId(badge.id);
-                                                setCustomMissionDesc(badge.description);
-                                                closeModal();
-                                                setMissionSearch('');
-                                            }}
-                                            className="w-full p-3 rounded-xl border border-slate-100 hover:border-amber-500 hover:bg-amber-50 transition-all flex items-center gap-3 group text-left"
-                                        >
-                                            <div className="flex-1">
-                                                <h4 className="font-bold text-sm text-slate-700 group-hover:text-amber-700">{badge.name}</h4>
-                                                <p className="text-[10px] text-slate-400 line-clamp-1">{badge.description}</p>
-                                            </div>
-                                            {(badge as any).shared && (
-                                                <div className="text-[8px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-100 uppercase tracking-tighter self-start" title="Compartilhada por outro professor">
-                                                    <i className="fas fa-share-alt mr-0.5"></i> Shared
+                                    data.badgesCatalog
+                                        .filter(b => {
+                                            const matchesBimester = missionSelectorBimester === 'all' || b.bimesters.includes(missionSelectorBimester as Bimester);
+                                            const matchesSearch = b.name.toLowerCase().includes(missionSearch.toLowerCase());
+
+                                            // Visibility Logic
+                                            const isGlobal = !b.assignedSchoolIds || b.assignedSchoolIds.length === 0;
+                                            const isLinkedToSchool = b.assignedSchoolIds?.includes(selectedSchoolId);
+                                            const isLinkedToClass = !b.assignedClassIds || b.assignedClassIds.length === 0 || b.assignedClassIds.includes(selectedClassId);
+
+                                            // Filter Logic (Modal specific)
+                                            const matchesModalSchool = !missionSelectorSchoolId || b.assignedSchoolIds?.includes(missionSelectorSchoolId);
+
+                                            const isVisible = isGlobal || (isLinkedToSchool && isLinkedToClass);
+
+                                            return matchesBimester && matchesSearch && isVisible && matchesModalSchool;
+                                        })
+                                        .map(badge => (
+                                            <button
+                                                key={badge.id}
+                                                onClick={() => {
+                                                    setSelectedTaskId(badge.id);
+                                                    setCustomMissionDesc(badge.description);
+                                                    closeModal();
+                                                    setMissionSearch('');
+                                                }}
+                                                className="w-full p-3 rounded-xl border border-slate-100 hover:border-amber-500 hover:bg-amber-50 transition-all flex items-center gap-3 group text-left"
+                                            >
+                                                <div className="flex-1">
+                                                    <h4 className="font-bold text-sm text-slate-700 group-hover:text-amber-700">{badge.name}</h4>
+                                                    <p className="text-[10px] text-slate-400 line-clamp-1">{badge.description}</p>
                                                 </div>
-                                            )}
-                                        </button>
-                                    ))
+                                                {(badge as any).shared && (
+                                                    <div className="text-[8px] font-bold text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-100 uppercase tracking-tighter self-start" title="Compartilhada por outro professor">
+                                                        <i className="fas fa-share-alt mr-0.5"></i> Shared
+                                                    </div>
+                                                )}
+                                            </button>
+                                        ))
                                 )}
                             </div>
                         </div>
@@ -2475,33 +2874,34 @@ export default function App() {
                                             });
                                         }}
                                     >
-                                        <option value="Daily">Missão Diária — padrão 20 LXC (10–100)</option>
-                                        <option value="Weekly">Missão Semanal — padrão 50 LXC (20–200)</option>
-                                        <option value="Side Quest">Side Quest — padrão 10 LXC (5–50)</option>
-                                        <option value="Boss">Missão Principal (Boss) — padrão 100 LXC (50–250)</option>
-                                        <option value="Custom">— Tarefa Rápida — padrão 10 LXC (5–100)</option>
+                                        <option value="Daily">Missão Diária — padrão 20 LXC (0–100)</option>
+                                        <option value="Weekly">Missão Semanal — padrão 50 LXC (0–200)</option>
+                                        <option value="Side Quest">Side Quest — padrão 10 LXC (0–50)</option>
+                                        <option value="Boss">Missão Principal (Boss) — padrão 100 LXC (0–250)</option>
+                                        <option value="Custom">— Tarefa Rápida — padrão 10 LXC (0–100)</option>
                                     </select>
                                 </div>
                                 <div>
                                     <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-                                        {formData.category === 'Daily' ? 'Pontos (10–100)' :
-                                            formData.category === 'Weekly' ? 'Pontos (20–200)' :
-                                                formData.category === 'Side Quest' ? 'Pontos (5–50)' :
-                                                    formData.category === 'Boss' ? 'Pontos (50–250)' :
-                                                        'Pontos (5–100)'}
+                                        {formData.category === 'Daily' ? 'Pontos (0–100)' :
+                                            formData.category === 'Weekly' ? 'Pontos (0–200)' :
+                                                formData.category === 'Side Quest' ? 'Pontos (0–50)' :
+                                                    formData.category === 'Boss' ? 'Pontos (0–250)' :
+                                                        'Pontos (0–100)'}
                                     </label>
                                     <input
                                         type="number"
-                                        min={formData.category === 'Daily' ? 10 : formData.category === 'Weekly' ? 20 : formData.category === 'Side Quest' ? 5 : formData.category === 'Boss' ? 50 : 5}
+                                        min={0}
                                         max={formData.category === 'Daily' ? 100 : formData.category === 'Weekly' ? 200 : formData.category === 'Side Quest' ? 50 : formData.category === 'Boss' ? 250 : 100}
                                         value={formData.points}
                                         onChange={(e: any) => {
                                             let val = parseInt(e.target.value) || 0;
                                             const cat = formData.category || 'Custom';
-                                            const minP = cat === 'Daily' ? 10 : cat === 'Weekly' ? 20 : cat === 'Side Quest' ? 5 : cat === 'Boss' ? 50 : 5;
+                                            const minP = 0;
                                             const maxP = cat === 'Daily' ? 100 : cat === 'Weekly' ? 200 : cat === 'Side Quest' ? 50 : cat === 'Boss' ? 250 : 100;
                                             setFormData({ ...formData, points: Math.min(maxP, Math.max(minP, val)) });
                                         }}
+                                        className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 transition-colors font-bold text-indigo-600"
                                     />
                                 </div>
                                 <div className="flex items-center justify-between p-3 bg-emerald-50 rounded-xl border border-emerald-100">
@@ -2528,17 +2928,38 @@ export default function App() {
                         {modalConfig.type === 'penalty' && (
                             <div>
                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Pontos Perdidos (LXC) [-30 a -1]</label>
-                                <input
-                                    type="number"
-                                    min="-30"
-                                    max="-1"
-                                    value={formData.points}
-                                    onChange={(e: any) => {
-                                        let val = parseInt(e.target.value) || 0;
-                                        setFormData({ ...formData, points: Math.min(-1, Math.max(-30, val)) });
-                                    }}
-                                    className="w-full bg-red-50 border border-red-300 rounded-xl p-3 outline-none focus:border-red-500 text-red-700 font-bold"
-                                />
+                                <div className="flex items-center gap-1 justify-center mt-1 bg-red-50 p-2 rounded-2xl border border-red-100 shadow-inner">
+                                    <button
+                                        type="button"
+                                        onClick={() => setFormData(prev => ({ ...prev, points: Math.min(-1, prev.points + 1) }))}
+                                        className="w-10 h-10 bg-white shadow-sm border border-slate-200 rounded-xl font-bold hover:bg-red-50 hover:border-red-300 text-slate-600 transition-all active:scale-95"
+                                        title="Menos LXC perdidos"
+                                    >
+                                        <i className="fas fa-minus"></i>
+                                    </button>
+                                    <div className="flex flex-col items-center flex-1">
+                                        <label className="text-[9px] font-bold text-red-400 uppercase">LXC</label>
+                                        <input
+                                            type="number"
+                                            className="w-16 text-center font-black text-xl outline-none bg-transparent text-red-600 hide-number-arrows"
+                                            value={formData.points}
+                                            min="-30"
+                                            max="-1"
+                                            onChange={e => {
+                                                let val = parseInt(e.target.value) || 0;
+                                                setFormData({ ...formData, points: Math.min(-1, Math.max(-30, val)) });
+                                            }}
+                                        />
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFormData(prev => ({ ...prev, points: Math.max(-30, prev.points - 1) }))}
+                                        className="w-10 h-10 bg-white shadow-sm border border-slate-200 rounded-xl font-bold hover:bg-red-50 hover:border-red-300 text-slate-600 transition-all active:scale-95"
+                                        title="Mais LXC perdidos"
+                                    >
+                                        <i className="fas fa-plus"></i>
+                                    </button>
+                                </div>
                                 <p className="text-[10px] text-slate-400 mt-1 mb-4">Insira o valor negativo. Ex: -10</p>
                                 <div className="flex items-center justify-between p-3 bg-emerald-50 rounded-xl border border-emerald-100">
                                     <div className="flex items-center gap-2">
@@ -2679,6 +3100,95 @@ export default function App() {
                                         </div>
                                     )}
                                 </div>
+                            </div>
+                        )}
+
+                        {(modalConfig.type === 'task' || modalConfig.type === 'badge' || modalConfig.type === 'penalty') && (
+                            <div className="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Visibilidade</label>
+                                <div className="flex gap-2 mb-4">
+                                    <button
+                                        type="button"
+                                        onClick={() => setFormData({ ...formData, assignedSchoolIds: [], assignedClassIds: [] })}
+                                        className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all border-2 ${formData.assignedSchoolIds?.length === 0 ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-400 border-slate-200 hover:border-indigo-300'}`}
+                                    >
+                                        <i className="fas fa-globe mr-1"></i> Disponível em Tudo
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            if (formData.assignedSchoolIds?.length === 0) {
+                                                // Default to current school if nothing selected
+                                                setFormData({ ...formData, assignedSchoolIds: selectedSchoolId ? [selectedSchoolId] : [] });
+                                            }
+                                        }}
+                                        className={`flex-1 py-2 rounded-lg text-xs font-bold transition-all border-2 ${formData.assignedSchoolIds?.length! > 0 ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-400 border-slate-200 hover:border-indigo-300'}`}
+                                    >
+                                        <i className="fas fa-lock-open mr-1"></i> Restrito
+                                    </button>
+                                </div>
+
+                                {formData.assignedSchoolIds?.length! > 0 && (
+                                    <div className="space-y-3 animate-fade-in border-t border-slate-200 pt-3">
+                                        <div>
+                                            <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Vincular às Escolas</p>
+                                            <div className="flex flex-wrap gap-2">
+                                                {data.schools.map(s => (
+                                                    <button
+                                                        key={s.id}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            const current = formData.assignedSchoolIds || [];
+                                                            if (current.includes(s.id)) {
+                                                                setFormData({
+                                                                    ...formData,
+                                                                    assignedSchoolIds: current.filter(id => id !== s.id),
+                                                                    assignedClassIds: (formData.assignedClassIds || []).filter(cid => !s.classes?.some(c => c.id === cid))
+                                                                });
+                                                            } else {
+                                                                setFormData({ ...formData, assignedSchoolIds: [...current, s.id] });
+                                                            }
+                                                        }}
+                                                        className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all border ${formData.assignedSchoolIds?.includes(s.id) ? 'bg-indigo-100 text-indigo-700 border-indigo-300' : 'bg-white text-slate-400 border-slate-200'}`}
+                                                    >
+                                                        {s.name}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {formData.assignedSchoolIds?.filter(id => data.schools.find(s => s.id === id)?.classes?.length).length! > 0 && (
+                                            <div>
+                                                <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Restringir a Turmas Específicas (Opcional)</p>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {data.schools
+                                                        .filter(s => formData.assignedSchoolIds?.includes(s.id))
+                                                        .flatMap(s => s.classes || [])
+                                                        .map(c => (
+                                                            <button
+                                                                key={c.id}
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    const current = formData.assignedClassIds || [];
+                                                                    if (current.includes(c.id)) {
+                                                                        setFormData({ ...formData, assignedClassIds: current.filter(id => id !== c.id) });
+                                                                    } else {
+                                                                        setFormData({ ...formData, assignedClassIds: [...current, c.id] });
+                                                                    }
+                                                                }}
+                                                                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold transition-all border ${formData.assignedClassIds?.includes(c.id) ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-white text-slate-400 border-slate-200'}`}
+                                                            >
+                                                                <span className="opacity-50 mr-1 text-[8px]">{data.schools.find(s => s.id === c.schoolId)?.name}:</span> {c.name}
+                                                            </button>
+                                                        ))}
+                                                </div>
+                                                <p className="text-[8px] text-slate-400 mt-1 italic">
+                                                    * Se nenhuma turma for selecionada, ficará disponível para todas as turmas das escolas escolhidas.
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -3014,26 +3524,39 @@ export default function App() {
             < ConfirmationModal
                 isOpen={deleteConfig.isOpen}
                 title="Confirmar Exclusão"
-                message={`Tem certeza que deseja excluir "${deleteConfig.itemName || 'este item'}"? Esta ação é irreversível.`}
+                message={
+                    deleteConfig.type === 'school'
+                        ? `Tem certeza que deseja excluir "${deleteConfig.itemName || 'esta escola'}"? O registro ficará arquivado e pode ser restaurado pelo administrador.`
+                        : `Tem certeza que deseja excluir "${deleteConfig.itemName || 'este item'}"? Esta ação é irreversível.`
+                }
+                extraContent={deleteConfig.warningMessage ? (
+                    <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 flex gap-2">
+                        <i className="fas fa-exclamation-triangle text-amber-500 mt-0.5 flex-shrink-0"></i>
+                        <span>{deleteConfig.warningMessage}</span>
+                    </div>
+                ) : undefined}
                 onClose={() => setDeleteConfig({ ...deleteConfig, isOpen: false })}
                 onConfirm={executeDelete}
+                variant="danger"
             />
 
             {showBatchImport && <BatchStudentModal onClose={() => setShowBatchImport(false)} onSave={batchImportStudents} />}
-            {showEditStudents && <EditStudentsModal
-                isOpen={showEditStudents}
-                onClose={() => setShowEditStudents(false)}
-                onSave={handleSaveEditStudents}
-                initialStudents={data.schools.find(s => s.id === selectedSchoolId)?.classes?.find(c => c.id === selectedClassId)?.students || []}
-                schoolId={selectedSchoolId}
-                classId={selectedClassId}
-            />}
+            {
+                showEditStudents && <EditStudentsModal
+                    isOpen={showEditStudents}
+                    onClose={() => setShowEditStudents(false)}
+                    onSave={handleSaveEditStudents}
+                    initialStudents={data.schools.find(s => s.id === selectedSchoolId)?.classes?.find(c => c.id === selectedClassId)?.students || []}
+                    schoolId={selectedSchoolId}
+                    classId={selectedClassId}
+                />
+            }
 
             {
                 applyPenaltyConfig.isOpen && (
                     <GenericModal
                         title="Aplicar Penalidade"
-                        onClose={() => setApplyPenaltyConfig({ isOpen: false, penaltyId: null, amount: 0 })}
+                        onClose={() => { setApplyPenaltyConfig({ isOpen: false, penaltyId: null, amount: 0 }); setPenaltyStudentSearch(''); }}
                         onSave={applyPenalty}
                         saveLabel="Aplicar Penalidade"
                         saveVariant="danger"
@@ -3044,19 +3567,37 @@ export default function App() {
                                     <h4 className="font-bold text-red-800">{data.penaltiesCatalog.find(p => p.id === applyPenaltyConfig.penaltyId)?.title}</h4>
                                     <p className="text-sm text-red-600 mt-1">{data.penaltiesCatalog.find(p => p.id === applyPenaltyConfig.penaltyId)?.description}</p>
                                 </div>
-                                <div className="flex flex-col items-center ml-4">
-                                    <label className="text-[10px] font-bold text-red-700 uppercase mb-1">Impacto (LXC)</label>
-                                    <input
-                                        type="number"
-                                        className="w-20 text-center font-bold text-lg py-1 border-b-2 border-red-300 outline-none bg-transparent text-red-600"
-                                        value={applyPenaltyConfig.amount}
-                                        onChange={e => {
-                                            let val = parseInt(e.target.value) || 0;
-                                            if (val < -30) val = -30;
-                                            if (val > -1) val = -1;
-                                            setApplyPenaltyConfig(prev => ({ ...prev, amount: val }));
-                                        }}
-                                    />
+                                <div className="flex items-center gap-1 bg-white p-1 rounded-2xl border border-red-100 shadow-sm ml-4">
+                                    <button
+                                        type="button"
+                                        onClick={() => setApplyPenaltyConfig(prev => ({ ...prev, amount: Math.min(-1, prev.amount + 1) }))}
+                                        className="w-8 h-8 bg-slate-50 border border-slate-200 rounded-lg font-bold hover:bg-red-50 hover:border-red-300 text-slate-600 transition-all active:scale-95 flex items-center justify-center"
+                                        title="Menos LXC perdidos"
+                                    >
+                                        <i className="fas fa-minus text-xs"></i>
+                                    </button>
+                                    <div className="flex flex-col items-center px-2">
+                                        <label className="text-[8px] font-bold text-red-400 uppercase">LXC</label>
+                                        <input
+                                            type="number"
+                                            className="w-12 text-center font-black text-lg outline-none bg-transparent text-red-600 hide-number-arrows"
+                                            value={applyPenaltyConfig.amount}
+                                            onChange={e => {
+                                                let val = parseInt(e.target.value) || 0;
+                                                if (val < -30) val = -30;
+                                                if (val > -1) val = -1;
+                                                setApplyPenaltyConfig(prev => ({ ...prev, amount: val }));
+                                            }}
+                                        />
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setApplyPenaltyConfig(prev => ({ ...prev, amount: Math.max(-30, prev.amount - 1) }))}
+                                        className="w-8 h-8 bg-slate-50 border border-slate-200 rounded-lg font-bold hover:bg-red-50 hover:border-red-300 text-slate-600 transition-all active:scale-95 flex items-center justify-center"
+                                        title="Mais LXC perdidos"
+                                    >
+                                        <i className="fas fa-plus text-xs"></i>
+                                    </button>
                                 </div>
                             </div>
 
@@ -3065,7 +3606,7 @@ export default function App() {
                                     <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Escola</label>
                                     <select className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm outline-none"
                                         value={penaltySchoolId}
-                                        onChange={e => { setPenaltySchoolId(e.target.value); setPenaltyClassId(''); }}
+                                        onChange={e => { setPenaltySchoolId(e.target.value); setPenaltyClassId(''); setPenaltyStudentSearch(''); }}
                                     >
                                         <option value="">Selecione...</option>
                                         {data.schools.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -3075,7 +3616,7 @@ export default function App() {
                                     <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Turma</label>
                                     <select className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-sm outline-none"
                                         value={penaltyClassId}
-                                        onChange={e => setPenaltyClassId(e.target.value)}
+                                        onChange={e => { setPenaltyClassId(e.target.value); setPenaltyStudentSearch(''); }}
                                         disabled={!penaltySchoolId}
                                     >
                                         <option value="">Selecione...</option>
@@ -3084,6 +3625,19 @@ export default function App() {
                                 </div>
                             </div>
 
+                            {penaltyClassId && (
+                                <div className="relative">
+                                    <i className="fas fa-search absolute left-3 top-2.5 text-slate-300 text-xs"></i>
+                                    <input
+                                        type="text"
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-8 pr-4 py-2 text-xs outline-none focus:border-indigo-400"
+                                        placeholder="Buscar aluno..."
+                                        value={penaltyStudentSearch}
+                                        onChange={e => setPenaltyStudentSearch(e.target.value)}
+                                    />
+                                </div>
+                            )}
+
                             <div>
                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Selecionar Alunos</label>
                                 <div className="max-h-60 overflow-y-auto bg-slate-50 border border-slate-200 rounded-xl p-2">
@@ -3091,17 +3645,25 @@ export default function App() {
                                         <p className="text-center text-slate-400 text-xs py-4">Selecione uma turma para ver os alunos.</p>
                                     ) : (
                                         <div className="space-y-1">
-                                            {data.schools.find(s => s.id === penaltySchoolId)?.classes?.find(c => c.id === penaltyClassId)?.students?.map(std => (
-                                                <div key={std.id}
-                                                    className={`p-2 rounded-lg flex items-center gap-2 cursor-pointer transition-colors ${penaltyStudents.includes(std.id) ? 'bg-red-100 border border-red-200' : 'hover:bg-slate-100'}`}
-                                                    onClick={() => setPenaltyStudents(prev => prev.includes(std.id) ? prev.filter(id => id !== std.id) : [...prev, std.id])}
-                                                >
-                                                    <div className={`w-4 h-4 rounded border flex items-center justify-center ${penaltyStudents.includes(std.id) ? 'bg-red-500 border-red-500' : 'border-slate-300 bg-white'}`}>
-                                                        {penaltyStudents.includes(std.id) && <i className="fas fa-check text-white text-[10px]"></i>}
-                                                    </div>
-                                                    <span className="text-sm font-medium text-slate-700">{std.name}</span>
-                                                </div>
-                                            ))}
+                                            {(() => {
+                                                const school = data.schools.find(s => s.id === penaltySchoolId);
+                                                const cls = school?.classes?.find(c => c.id === penaltyClassId);
+                                                const students = cls?.students || [];
+                                                return students
+                                                    .filter(s => s.name.toLowerCase().includes(penaltyStudentSearch.toLowerCase()))
+                                                    .sort((a, b) => a.name.localeCompare(b.name))
+                                                    .map(std => (
+                                                        <div key={std.id}
+                                                            className={`p-2 rounded-lg flex items-center gap-2 cursor-pointer transition-colors ${penaltyStudents.includes(std.id) ? 'bg-red-100 border border-red-200' : 'hover:bg-slate-100'}`}
+                                                            onClick={() => setPenaltyStudents(prev => prev.includes(std.id) ? prev.filter(id => id !== std.id) : [...prev, std.id])}
+                                                        >
+                                                            <div className={`w-4 h-4 rounded border flex items-center justify-center ${penaltyStudents.includes(std.id) ? 'bg-red-500 border-red-500' : 'border-slate-300 bg-white'}`}>
+                                                                {penaltyStudents.includes(std.id) && <i className="fas fa-check text-white text-[10px]"></i>}
+                                                            </div>
+                                                            <span className="text-sm font-medium text-slate-700">{std.name}</span>
+                                                        </div>
+                                                    ));
+                                            })()}
                                         </div>
                                     )}
                                 </div>
@@ -3146,6 +3708,8 @@ export default function App() {
                                         disabled={lockoutTime > 0}
                                         autoFocus
                                         placeholder="••••"
+                                        autoComplete="one-time-code"
+                                        inputMode="numeric"
                                     />
                                     {lockoutTime > 0 && (
                                         <div className="absolute inset-0 flex items-center justify-center bg-white/10 backdrop-blur-[1px] rounded-2xl">
