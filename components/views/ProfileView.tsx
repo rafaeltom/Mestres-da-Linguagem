@@ -233,7 +233,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ profile, handleProfile
                             const limits = computeTeacherLimits(profile);
                             const masterCount = profile.masterKeysCount ?? 0;
                             const testCount = profile.testKeysCount ?? 0;
-                            const hasKeys = masterCount > 0 || testCount > 0;
+                            const hasKeys = masterCount > 0 || testCount > 0 || limits.isAdmin;
                             return (
                                 <div className={`p-4 rounded-xl border mb-4 ${hasKeys ? 'bg-emerald-50 border-emerald-100' : 'bg-amber-50 border-amber-100'}`}>
                                     <div className="flex items-center gap-3">
@@ -243,6 +243,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ profile, handleProfile
                                                 <>
                                                     <h5 className="font-bold text-emerald-800 text-sm">Acesso Ativo</h5>
                                                     <div className="flex gap-2 flex-wrap mt-1">
+                                                        {limits.isAdmin && (
+                                                            <span className="text-[10px] bg-white px-2 py-0.5 rounded-lg border border-purple-200 text-purple-700 font-bold">
+                                                                👑 Acesso Total (Admin)
+                                                            </span>
+                                                        )}
                                                         {masterCount > 0 && (
                                                             <span className="text-[10px] bg-white px-2 py-0.5 rounded-lg border border-emerald-200 text-emerald-700 font-bold">
                                                                 🔑 {masterCount}/{MASTER_KEY_LIMIT} Chave(s) Mestre
@@ -270,29 +275,27 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ profile, handleProfile
                             );
                         })()}
 
-                        {profile.role !== 'admin' && (
-                            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                                <p className="text-xs text-slate-600 mb-3"><i className="fas fa-info-circle text-indigo-400 mr-1"></i>Insira uma chave (Mestre ou Teste) para expandir seus recursos.</p>
-                                <div className="flex gap-2">
-                                    <input
-                                        type="text"
-                                        placeholder="INSIRA SUA CHAVE AQUI"
-                                        value={licenseInput}
-                                        onChange={e => setLicenseInput(e.target.value.toUpperCase())}
-                                        className="flex-1 bg-white border border-slate-300 rounded-xl px-4 py-2 text-sm font-bold tracking-widest outline-none focus:border-indigo-500"
-                                        autoComplete="off"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={handleClaim}
-                                        disabled={isClaiming || !licenseInput}
-                                        className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50"
-                                    >
-                                        {isClaiming ? <i className="fas fa-spinner fa-spin"></i> : 'ATIVAR'}
-                                    </button>
-                                </div>
+                        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                            <p className="text-xs text-slate-600 mb-3"><i className="fas fa-info-circle text-indigo-400 mr-1"></i>Insira uma chave (Mestre ou Teste) para expandir seus recursos.</p>
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    placeholder="INSIRA SUA CHAVE AQUI"
+                                    value={licenseInput}
+                                    onChange={e => setLicenseInput(e.target.value.toUpperCase())}
+                                    className="flex-1 bg-white border border-slate-300 rounded-xl px-4 py-2 text-sm font-bold tracking-widest outline-none focus:border-indigo-500"
+                                    autoComplete="off"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={handleClaim}
+                                    disabled={isClaiming || !licenseInput}
+                                    className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-xs font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                                >
+                                    {isClaiming ? <i className="fas fa-spinner fa-spin"></i> : 'ATIVAR'}
+                                </button>
                             </div>
-                        )}
+                        </div>
                     </div>
 
                     {profile.role === 'admin' && (
@@ -335,7 +338,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ profile, handleProfile
                                                 onClick={() => onGenerateBatch(genKeyType)}
                                                 className="flex-1 bg-indigo-600 text-white p-2 rounded-lg text-[10px] font-bold hover:bg-indigo-700"
                                             >
-                                                GERAR LOTE (50) {genKeyType.toUpperCase()}
+                                                GERAR LOTE (5) {genKeyType.toUpperCase()}
                                             </button>
                                             <button
                                                 type="button"
@@ -349,17 +352,20 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ profile, handleProfile
                                         {adminKeys.length > 0 && (
                                             <div className="max-h-60 overflow-y-auto space-y-2 pr-2">
                                                 <div className="grid grid-cols-1 gap-2">
-                                                    {adminKeys.filter(k => !k.isUsed).slice(0, 50).map((k, idx) => (
-                                                        <div key={idx} className={`bg-white p-2 rounded border font-mono text-[9px] flex justify-between items-center ${k.type === 'test' ? 'border-blue-200' : 'border-indigo-200'}`}>
+                                                    {[...adminKeys].sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()).slice(0, 50).map((k, idx) => (
+                                                        <div key={idx} className={`bg-white p-2 rounded border font-mono text-[9px] flex justify-between items-center ${k.type === 'test' ? 'border-blue-200' : 'border-indigo-200'} ${k.used ? 'opacity-50 bg-slate-50' : ''}`}>
                                                             <div>
                                                                 <span className={`text-[8px] font-bold px-1 rounded mr-1 ${k.type === 'test' ? 'bg-blue-100 text-blue-700' : 'bg-indigo-100 text-indigo-700'}`}>{k.type ?? 'master'}</span>
-                                                                <span>{k.id}</span>
+                                                                <span className={k.used ? "line-through text-slate-400" : ""}>{k.id}</span>
+                                                                {k.used && (
+                                                                    <span className="ml-2 text-red-500 font-bold"><i className="fas fa-times-circle"></i> Usada</span>
+                                                                )}
                                                             </div>
-                                                            <i className="fas fa-copy text-slate-300 cursor-pointer hover:text-indigo-500" onClick={() => navigator.clipboard.writeText(k.id)}></i>
+                                                            <i className={`fas fa-copy cursor-pointer ${k.used ? 'text-slate-200 cursor-not-allowed' : 'text-slate-300 hover:text-indigo-500'}`} onClick={() => !k.used && navigator.clipboard.writeText(k.id)} title={k.used ? "Chave já utilizada" : "Copiar"}></i>
                                                         </div>
                                                     ))}
                                                 </div>
-                                                <p className="text-[9px] text-slate-400 text-center">Exibindo chaves disponíveis.</p>
+                                                <p className="text-[9px] text-slate-400 text-center">Exibindo últimas 50 chaves.</p>
                                             </div>
                                         )}
                                     </div>
